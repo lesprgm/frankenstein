@@ -20,10 +20,12 @@
   "license": "MIT",
   "dependencies": {
     "@memorylayer/storage": "file:../storage",
+    "lru-cache": "^10.1.0",
     "openai": "^4.20.0",
     "tiktoken": "^1.0.22"
   },
   "devDependencies": {
+    "@types/lru-cache": "^7.10.10",
     "@types/node": "^20.10.0",
     "typescript": "^5.3.0",
     "vitest": "^1.0.0"

@@ -19,7 +19,7 @@ import type {
 } from './types';
 import type { ContextError, Result } from './errors';
 import type { MemoryType } from '@memorylayer/storage';
-import { EmbeddingCache } from './embeddings/cache';
+import { EmbeddingCache, ResultCache, ContextCache } from './embeddings/cache';
 import { DEFAULT_TEMPLATES } from './templates';
 import { MemoryRanker } from './ranker';
 import { ContextFormatter } from './formatter';
@@ -29,10 +29,10 @@ import { CharacterTokenizer } from './tokenizer';
  * Default logger that does nothing
  */
 const noopLogger: Logger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  debug: () => {},
+  info: () => { },
+  warn: () => { },
+  error: () => { },
+  debug: () => { },
 };
 
 /**
@@ -40,15 +40,15 @@ const noopLogger: Logger = {
  */
 function sanitizeForLogging(text: string, maxLength: number = 100): string {
   if (!text) return '';
-  
+
   // Truncate to max length
   let sanitized = text.substring(0, maxLength);
-  
+
   // Add ellipsis if truncated
   if (text.length > maxLength) {
     sanitized += '...';
   }
-  
+
   return sanitized;
 }
 
@@ -75,6 +75,8 @@ export class ContextEngine {
   private readonly storageClient: StorageClient;
   private readonly embeddingProvider: EmbeddingProvider;
   private readonly embeddingCache: EmbeddingCache;
+  private readonly resultCache: ResultCache;
+  private readonly contextCache: ContextCache;
   private readonly defaultTemplate: string;
   private readonly defaultTokenBudget: number;
   private readonly logger: Logger;
@@ -127,8 +129,10 @@ export class ContextEngine {
     this.embeddingProvider = config.embeddingProvider;
     this.logger = config.logger ?? noopLogger;
 
-    // Initialize embedding cache
+    // Initialize caches
     this.embeddingCache = new EmbeddingCache(config.cacheConfig ?? {});
+    this.resultCache = new ResultCache(config.cacheConfig ?? {});
+    this.contextCache = new ContextCache(config.cacheConfig ?? {});
 
     // Set defaults
     this.defaultTemplate = config.defaultTemplate ?? 'chat';
@@ -316,7 +320,7 @@ export class ContextEngine {
       // Relationship expansion if requested
       if (options?.includeRelationships) {
         const relationshipDepth = options.relationshipDepth ?? 1;
-        
+
         // Validate relationship depth
         if (relationshipDepth < 1 || relationshipDepth > 10) {
           this.logger.warn('Invalid relationship depth, using default', {
@@ -324,9 +328,9 @@ export class ContextEngine {
             default: 1,
           });
         }
-        
+
         const validDepth = Math.max(1, Math.min(10, relationshipDepth));
-        
+
         this.logger.debug('Expanding relationships', {
           workspaceId: sanitizeForLogging(workspaceId, 50),
           depth: validDepth,
@@ -554,20 +558,20 @@ export class ContextEngine {
       let vector = this.embeddingCache.get(cacheKey);
 
       if (vector) {
-        this.logger.debug('Using cached embedding', { 
+        this.logger.debug('Using cached embedding', {
           query: sanitizeForLogging(query, 50),
           model: this.embeddingProvider.model,
         });
       } else {
         // Generate embedding
-        this.logger.debug('Generating embedding for query', { 
+        this.logger.debug('Generating embedding for query', {
           query: sanitizeForLogging(query, 50),
           model: this.embeddingProvider.model,
         });
-        
+
         try {
           vector = await this.embeddingProvider.embed(query.trim());
-          
+
           // Validate embedding dimensions
           if (vector.length !== this.embeddingProvider.dimensions) {
             this.logger.error('Embedding dimension mismatch', {
@@ -705,7 +709,7 @@ export class ContextEngine {
     try {
       // Apply ranking to search results
       let rankedResults = searchResults;
-      
+
       if (options?.ranker) {
         // Use custom ranker if provided
         if (typeof options.ranker === 'function') {
@@ -752,7 +756,7 @@ export class ContextEngine {
 
       // Select template
       const templateName = options?.template ?? this.defaultTemplate;
-      
+
       // Validate template name
       if (templateName && typeof templateName !== 'string') {
         return {
@@ -763,7 +767,7 @@ export class ContextEngine {
           },
         };
       }
-      
+
       const template = this.templates.get(templateName);
 
       if (!template) {
@@ -793,7 +797,7 @@ export class ContextEngine {
 
       // Get token budget
       const tokenBudget = options?.tokenBudget ?? this.defaultTokenBudget;
-      
+
       // Validate token budget
       if (tokenBudget <= 0) {
         this.logger.warn('Invalid token budget', { tokenBudget });
@@ -823,7 +827,7 @@ export class ContextEngine {
 
       return { ok: true, value: contextResult };
     } catch (error) {
-      this.logger.error('Unexpected error building context', { 
+      this.logger.error('Unexpected error building context', {
         error: sanitizeError(error),
       });
       return {
@@ -853,6 +857,23 @@ export class ContextEngine {
     workspaceId: string,
     options?: ContextOptions
   ): Promise<Result<ContextResult, ContextError>> {
+    // Check context cache first
+    const cacheKey = this.contextCache.generateKey({
+      query,
+      workspaceId,
+      ...options,
+    });
+
+    const cachedContext = this.contextCache.get(cacheKey);
+    if (cachedContext) {
+      this.logger.debug('Context cache hit', {
+        query: sanitizeForLogging(query, 50),
+        workspaceId: sanitizeForLogging(workspaceId, 50),
+      });
+
+      return { ok: true, value: cachedContext };
+    }
+
     // Perform search
     const searchResult = await this.search(query, workspaceId, options);
 
@@ -866,7 +887,14 @@ export class ContextEngine {
     }
 
     // Build context from search results
-    return this.buildContextInternal(searchResult.value, options);
+    const contextResult = await this.buildContextInternal(searchResult.value, options);
+
+    // Cache successful context
+    if (contextResult.ok) {
+      this.contextCache.set(cacheKey, contextResult.value);
+    }
+
+    return contextResult;
   }
 
   /**
@@ -971,6 +999,43 @@ export class ContextEngine {
     });
 
     return { ok: true, value: preview };
+  }
+
+  /**
+   * Get cache statistics
+   * 
+   * Returns statistics for all caches including hit rates, sizes, and evictions.
+   * 
+   * @returns Cache statistics object
+   */
+  getCacheStats() {
+    return {
+      embedding: {
+        ...this.embeddingCache.getStats(),
+        hitRate: this.embeddingCache.getHitRate(),
+      },
+      result: {
+        ...this.resultCache.getStats(),
+        hitRate: this.resultCache.getHitRate(),
+      },
+      context: {
+        ...this.contextCache.getStats(),
+        hitRate: this.contextCache.getHitRate(),
+      },
+    };
+  }
+
+  /**
+   * Clear all caches
+   * 
+   * Clears the embedding, result, and context caches and resets statistics.
+   */
+  clearCaches(): void {
+    this.embeddingCache.clear();
+    this.resultCache.clear();
+    this.contextCache.clear();
+
+    this.logger.info('All caches cleared');
   }
 }
 
