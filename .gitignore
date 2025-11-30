@@ -2,6 +2,7 @@
 node_modules/
 .pnp
 .pnp.js
+.npm/
 
 # Build outputs
 dist/
@@ -10,6 +11,7 @@ build/
 out/
 .next/
 *.local
+*.tsbuildinfo
 
 # Cloudflare / Wrangler
 .wrangler/
@@ -17,12 +19,14 @@ out/
 wrangler.toml.local
 
 # Environment files
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# .env (ignore globally disabled)
+# .env.*
+!.env.example
+!apps/ghost/backend/.env
+!apps/ghost/backend/.env.*
+!.env.test
 .dev.vars
+# *.env
 
 # Logs
 logs/
@@ -37,10 +41,15 @@ lerna-debug.log*
 coverage/
 .nyc_output/
 *.lcov
+junit.xml
+test-results/
 
 # Editor / IDE
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
 .idea/
 *.suo
 *.ntvs*
@@ -63,15 +72,18 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
-
-# TypeScript
-*.tsbuildinfo
-
-# Optional npm cache
-.npm
-
-# Optional eslint cache
 .eslintcache
+.prettiercache
 
 # Vite
 vite.config.*.timestamp-*
+
+# Python / Venv (if applicable)
+venv/
+__pycache__/
+*.pyc
+
+# App-specific
+apps/ghost/daemon/config.json
+apps/ghost/daemon/out/
+apps/ghost/daemon/make/

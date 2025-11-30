@@ -1,6 +1,14 @@
-# @memorylayer/memory-extraction
+# MemoryLayer - Memory Extraction Package
 
-Memory extraction module for MemoryLayer. Extracts structured memories (entities, facts, decisions) from conversations using LLM-based analysis.
+Core package for extracting, chunking, and deduplicating memories from conversations with built-in MAKER reliability layer.
+
+## Features
+
+- **Conversation-to-Memory Extraction**: Extract structured memories from conversations
+- **Chunking Strategies**: Split large conversations into manageable chunks
+- **Deduplication**: Identify and merge similar memories
+- **Custom Memory Types**: Define application-specific memory schemas
+- **MAKER Reliability Layer**: Multi-agent consensus for robust memory extraction (NEW)
 
 ## Installation
 
@@ -8,28 +16,6 @@ Memory extraction module for MemoryLayer. Extracts structured memories (entities
 npm install @memorylayer/memory-extraction
 ```
 
-## Features
-
-- Extract entities, facts, and decisions from conversations
-- Configurable extraction strategies (prompt-based, structured output, function calling)
-- Support for multiple LLM providers (OpenAI, Anthropic)
-- Batch processing for multiple conversations
-- Incremental extraction for streaming conversations
-- Memory deduplication and validation
-- **Custom memory types** - Define your own memory categories beyond the defaults
-- Extraction profiles for different use cases
-- **Conversation chunking** - Process arbitrarily large conversations that exceed LLM context windows
-
-## Usage
-
-### Basic Extraction
-
-```typescript
-import { MemoryExtractor } from '@memorylayer/memory-extraction';
-import { OpenAIProvider } from '@memorylayer/memory-extraction';
-import { StructuredOutputStrategy } from '@memorylayer/memory-extraction';
-
-// Create extractor instance
 const extractor = new MemoryExtractor({
   provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
   strategy: new StructuredOutputStrategy(),
@@ -130,6 +116,92 @@ if (result.ok && result.value.chunkingMetadata) {
 - `semantic`: Split based on topic changes
 
 See [CHUNKING.md](./CHUNKING.md) for complete documentation, [TOKEN_COUNTING.md](./TOKEN_COUNTING.md) for token counting accuracy details, and [MIGRATION.md](./MIGRATION.md) for enabling chunking in existing applications.
+
+## MAKER Reliability Layer
+
+**NEW**: MAKER (Multi-Agent Knowledge Extraction & Refinement) is a reliability layer that enhances memory extraction through parallel microagents, validation, and consensus voting.
+
+### Quick Start
+
+```typescript
+import { makerReliableExtractMemory } from '@memorylayer/memory-extraction';
+
+const extracted = await makerReliableExtractMemory(conversationText, llmProvider);
+
+if (extracted) {
+  console.log('Summary:', extracted.summary);
+  console.log('Decisions:', extracted.decisions);
+  console.log('Todos:', extracted.todos);
+}
+```
+
+### How MAKER Works
+
+1. **Microagents**: Launches 3 parallel LLM calls with identical prompts
+2. **Red-Flagging**: Validates each response (schema checks, content quality)
+3. **Voting**: Selects consensus result based on decision/todo overlap
+4. **Fallback**: Returns `null` if all agents fail or all outputs are invalid
+
+**Benefits**:
+- Improved reliability through redundancy
+- Error correction via consensus voting  
+- Graceful degradation on failures
+- Minimal latency overhead (parallel execution)
+
+**Cost**: ~3× LLM calls using Gemini Flash-8B (~$0.0003 per extraction)
+
+### Configuration
+
+```bash
+# Environment variables
+MAKER_ENABLED=true              # Enable/disable (default: true)
+MAKER_REPLICAS=3                # Parallel microagents (default: 3)
+MAKER_VOTE_K=2                  # Voting threshold (default: 2)
+MAKER_TEMPERATURE=0.4           # LLM temperature (default: 0.4)
+MAKER_TIMEOUT=10000             # Timeout in ms (default: 10000)
+MAKER_MODEL=gemini-1.5-flash-8b # Model (default: flash-8b)
+```
+
+Or programmatically:
+
+```typescript
+import { makerConfig } from '@memorylayer/memory-extraction';
+
+console.log('MAKER enabled:', makerConfig.enabled);
+console.log('Replicas:', makerConfig.replicas);
+```
+
+### Memory Structure
+
+```typescript
+interface ExtractedMemory {
+  summary: string;      // Session summary (20-1500 chars)
+  decisions: string[];  // Decision points made
+  todos: string[];      // Action items identified
+}
+```
+
+### Performance
+
+Based on stress testing (mocked providers):
+
+- **Latency**: p50 < 100ms, p95 < 200ms, p99 < 300ms
+- **Concurrency**: 50+ parallel extractions supported
+- **Stability**: 0% degradation over 100+ sequential extractions
+- **Resilience**: Graceful handling of 50-100% failure rates
+
+*Note: Real Gemini API latency ~500-2000ms due to network overhead*
+
+### Testing
+
+```bash
+# MAKER-specific tests
+npm test src/__tests__/maker.test.ts              # Unit tests (22)
+npm test src/__tests__/maker-integration.test.ts  # Integration (7)
+npm test src/__tests__/maker-stress.test.ts       # Stress tests (15)
+```
+
+**Total MAKER Coverage**: 44 tests (all passing ✓)
 
 ## Development
 

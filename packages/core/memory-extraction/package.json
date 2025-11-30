@@ -8,7 +8,12 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest --run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "maker-demo": "tsx examples/maker-live-demo.ts",
+    "maker-hard-test": "tsx examples/maker-hard-test.ts",
+    "maker-chaos-test": "tsx examples/maker-chaos-test.ts",
+    "maker-extreme-chaos-test": "tsx examples/maker-extreme-chaos-test.ts",
+    "maker-s-level-test": "tsx examples/maker-s-level-test.ts"
   },
   "keywords": [
     "memory",

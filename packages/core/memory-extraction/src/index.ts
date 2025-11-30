@@ -90,15 +90,15 @@ export class MemoryExtractor {
   private initializeChunking(): void {
     const tokenCounter = new TokenCounter();
     const strategies = this.loadChunkingStrategies();
-    
+
     this.chunkingOrchestrator = new ChunkingOrchestrator(
       tokenCounter,
       strategies,
       this.config.logger
     );
-    
+
     this.chunkDeduplicator = new ChunkDeduplicator(this.config.logger);
-    
+
     this.config.logger.info('Chunking initialized', {
       enabled: true,
       maxTokensPerChunk: this.config.chunking?.maxTokensPerChunk ?? 100000,
@@ -112,19 +112,19 @@ export class MemoryExtractor {
    */
   private loadChunkingStrategies(): Map<string, IChunkingStrategy> {
     const strategies = new Map<string, IChunkingStrategy>();
-    
+
     // Create a token counter for strategies
     const tokenCounter = new TokenCounter();
-    
+
     // Register built-in strategies
     const slidingWindow = new SlidingWindowStrategy(tokenCounter);
     const conversationBoundary = new ConversationBoundaryStrategy(tokenCounter);
     const semantic = new SemanticStrategy(tokenCounter);
-    
+
     strategies.set(slidingWindow.name, slidingWindow);
     strategies.set(conversationBoundary.name, conversationBoundary);
     strategies.set(semantic.name, semantic);
-    
+
     return strategies;
   }
 
@@ -145,7 +145,7 @@ export class MemoryExtractor {
       // Check if chunking is needed
       if (this.chunkingOrchestrator && this.config.chunking?.enabled) {
         const chunkingConfig = this.buildChunkingConfig();
-        
+
         if (this.chunkingOrchestrator.needsChunking(conversation, chunkingConfig)) {
           // Route to chunked extraction
           return this.extractWithChunking(conversation, workspaceId, options);
@@ -154,7 +154,7 @@ export class MemoryExtractor {
 
       // Apply profile settings if specified
       const effectiveConfig = this.applyProfile(options);
-      
+
       // Merge options with config (profile settings take precedence if profile was specified)
       const memoryTypes = options?.memoryTypes ?? effectiveConfig.memoryTypes;
       const minConfidence = options?.minConfidence ?? effectiveConfig.minConfidence;
@@ -191,7 +191,7 @@ export class MemoryExtractor {
 
       // Process raw memories: add IDs, timestamps, and required fields
       const processedMemories: ExtractedMemory[] = [];
-      
+
       for (const rawMemory of rawResult.memories) {
         // Ensure all required fields are present
         if (!rawMemory.type || !rawMemory.content) {
@@ -255,7 +255,7 @@ export class MemoryExtractor {
 
         // Generate stable ID using deduplicator
         memory.id = this.deduplicator.generateMemoryId(memory);
-        
+
         processedMemories.push(memory);
       }
 
@@ -265,7 +265,7 @@ export class MemoryExtractor {
 
       // Deduplicate memories
       const deduplicatedMemories = this.deduplicator.deduplicate(processedMemories);
-      
+
       this.config.logger.debug('Deduplication complete', {
         before: processedMemories.length,
         after: deduplicatedMemories.length,
@@ -276,7 +276,7 @@ export class MemoryExtractor {
         minConfidence: minConfidence,
       });
       const validationResult = validator.validateBatch(deduplicatedMemories);
-      
+
       if (validationResult.errors.length > 0) {
         this.config.logger.warn('Validation errors found', {
           errorCount: validationResult.errors.length,
@@ -293,11 +293,11 @@ export class MemoryExtractor {
 
       // Process relationships if requested
       let validRelationships: ExtractedRelationship[] = [];
-      
+
       if (includeRelationships && rawResult.relationships.length > 0) {
         // Build complete relationship objects
         const processedRelationships: ExtractedRelationship[] = [];
-        
+
         for (const rawRel of rawResult.relationships) {
           if (!rawRel.from_memory_id || !rawRel.to_memory_id || !rawRel.relationship_type) {
             this.config.logger.warn('Skipping relationship with missing required fields', {
@@ -398,7 +398,7 @@ export class MemoryExtractor {
             strategy: this.config.strategy.name,
             error: error.message,
           });
-          
+
           extractionError = {
             type: 'rate_limit',
             retryAfter: 60000, // Default to 60 seconds
@@ -411,7 +411,7 @@ export class MemoryExtractor {
             strategy: this.config.strategy.name,
             error: error.message,
           });
-          
+
           extractionError = {
             type: 'parse_error',
             message: `Failed to parse LLM response for conversation ${conversation.id}: ${error.message}`,
@@ -425,7 +425,7 @@ export class MemoryExtractor {
             error: error.message,
             stack: error.stack,
           });
-          
+
           extractionError = {
             type: 'llm_error',
             provider: this.config.provider.name,
@@ -441,7 +441,7 @@ export class MemoryExtractor {
           strategy: this.config.strategy.name,
           error,
         });
-        
+
         extractionError = {
           type: 'llm_error',
           provider: this.config.provider.name,
@@ -482,13 +482,13 @@ export class MemoryExtractor {
       );
 
       const startTime = Date.now();
-      
+
       // Build chunking configuration
       const chunkingConfig = this.buildChunkingConfig();
-      
+
       // Apply profile settings if specified
       const effectiveConfig = this.applyProfile(options);
-      
+
       // Merge options with config
       const memoryTypes = options?.memoryTypes ?? effectiveConfig.memoryTypes;
       const minConfidence = options?.minConfidence ?? effectiveConfig.minConfidence;
@@ -510,7 +510,7 @@ export class MemoryExtractor {
 
       // Phase 2: Extract from each chunk sequentially
       const extractionStartTime = Date.now();
-      
+
       // Build strategy config
       const strategyConfig: StrategyConfig = {
         memoryTypes,
@@ -520,7 +520,7 @@ export class MemoryExtractor {
       };
 
       const failureMode = this.config.chunking?.failureMode ?? 'continue-on-error';
-      
+
       const chunkResults = await this.chunkingOrchestrator.processChunksSequentially(
         chunks,
         workspaceId,
@@ -528,7 +528,7 @@ export class MemoryExtractor {
         strategyConfig,
         failureMode
       );
-      
+
       const extractionTime = Date.now() - extractionStartTime;
 
       this.config.logger.info(
@@ -543,9 +543,9 @@ export class MemoryExtractor {
 
       // Phase 3: Deduplicate across chunks
       const deduplicationStartTime = Date.now();
-      
+
       const deduplicationResult = this.chunkDeduplicator.deduplicateAcrossChunks(chunkResults);
-      
+
       this.config.logger.info(
         `Cross-chunk deduplication complete`,
         {
@@ -557,7 +557,7 @@ export class MemoryExtractor {
 
       // Process memories: add IDs, timestamps, and required fields
       const processedMemories: ExtractedMemory[] = [];
-      
+
       for (const rawMemory of deduplicationResult.uniqueMemories) {
         // Ensure all required fields are present
         if (!rawMemory.type || !rawMemory.content) {
@@ -621,7 +621,7 @@ export class MemoryExtractor {
             }
           }
         }
-        
+
         processedMemories.push(memory);
       }
 
@@ -630,7 +630,7 @@ export class MemoryExtractor {
         minConfidence: minConfidence,
       });
       const validationResult = validator.validateBatch(processedMemories);
-      
+
       if (validationResult.errors.length > 0) {
         this.config.logger.warn('Validation errors found', {
           errorCount: validationResult.errors.length,
@@ -642,11 +642,11 @@ export class MemoryExtractor {
 
       // Process relationships if requested
       let validRelationships: ExtractedRelationship[] = [];
-      
+
       if (includeRelationships) {
         // Collect all relationships from successful chunks
         const allRelationships: ExtractedRelationship[] = [];
-        
+
         for (const chunkResult of chunkResults) {
           if (chunkResult.status === 'success') {
             for (const rawRel of chunkResult.relationships) {
@@ -704,7 +704,7 @@ export class MemoryExtractor {
 
       // Check for chunk failures
       const failedChunks = chunkResults.filter(r => r.status === 'failed');
-      
+
       if (validMemories.length === 0) {
         status = 'failed';
         if (failedChunks.length > 0) {
@@ -815,7 +815,7 @@ export class MemoryExtractor {
           error: error.message,
           stack: error.stack,
         });
-        
+
         extractionError = {
           type: 'llm_error',
           provider: this.config.provider.name,
@@ -828,7 +828,7 @@ export class MemoryExtractor {
           workspaceId,
           error,
         });
-        
+
         extractionError = {
           type: 'llm_error',
           provider: this.config.provider.name,
@@ -867,10 +867,10 @@ export class MemoryExtractor {
 
       // Process conversations in batches according to configured batch size
       const batchSize = this.config.batchSize;
-      
+
       for (let i = 0; i < conversations.length; i += batchSize) {
         const batch = conversations.slice(i, i + batchSize);
-        
+
         this.config.logger.debug(`Processing batch ${Math.floor(i / batchSize) + 1}`, {
           batchStart: i,
           batchSize: batch.length,
@@ -881,7 +881,7 @@ export class MemoryExtractor {
         const batchPromises = batch.map(async (conversation) => {
           try {
             const result = await this.extract(conversation, workspaceId, options);
-            
+
             if (result.ok) {
               return result.value;
             } else {
@@ -890,7 +890,7 @@ export class MemoryExtractor {
                 `Extraction failed for conversation ${conversation.id}`,
                 { error: result.error }
               );
-              
+
               return {
                 memories: [],
                 relationships: [],
@@ -905,7 +905,7 @@ export class MemoryExtractor {
               `Unexpected error extracting conversation ${conversation.id}`,
               { error }
             );
-            
+
             return {
               memories: [],
               relationships: [],
@@ -923,11 +923,11 @@ export class MemoryExtractor {
 
         // Wait for all extractions in this batch to complete
         const batchResults = await Promise.all(batchPromises);
-        
+
         // Collect results and memories
         for (const result of batchResults) {
           results.push(result);
-          
+
           if (result.status === 'success' || result.status === 'partial') {
             successCount++;
             // Collect all memories from successful extractions
@@ -953,7 +953,7 @@ export class MemoryExtractor {
 
       // Use MemoryDeduplicator to deduplicate across all conversations in batch
       const deduplicatedMemories = this.deduplicator.deduplicate(allMemories);
-      
+
       this.config.logger.info('Cross-conversation deduplication complete', {
         before: allMemories.length,
         after: deduplicatedMemories.length,
@@ -962,7 +962,7 @@ export class MemoryExtractor {
 
       // Validate all memories and relationships
       const validationResult = this.validator.validateBatch(deduplicatedMemories);
-      
+
       if (validationResult.errors.length > 0) {
         this.config.logger.warn('Validation errors found in batch', {
           errorCount: validationResult.errors.length,
@@ -1027,9 +1027,8 @@ export class MemoryExtractor {
       const extractionError: ExtractionError = {
         type: 'llm_error',
         provider: this.config.provider.name,
-        message: `Batch extraction failed for ${conversations.length} conversations in workspace ${workspaceId}: ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`,
+        message: `Batch extraction failed for ${conversations.length} conversations in workspace ${workspaceId}: ${error instanceof Error ? error.message : 'Unknown error'
+          }`,
         cause: error,
       };
 
@@ -1056,7 +1055,7 @@ export class MemoryExtractor {
       memoryTypes: options?.memoryTypes ?? this.config.memoryTypes,
       minConfidence: options?.minConfidence ?? this.config.minConfidence,
     } as any; // Cast to any since IncrementalExtractor doesn't use chunking
-    
+
     // Create and return IncrementalExtractor instance with current config
     // Pass strategy and provider to incremental extractor
     return new IncrementalExtractor(
@@ -1076,7 +1075,7 @@ export class MemoryExtractor {
    */
   registerProfile(name: string, profile: ExtractionProfile): void {
     this.profileRegistry.register(name, profile);
-    
+
     this.config.logger.info(`Registered extraction profile: ${name}`, {
       strategy: profile.strategy.name,
       provider: profile.provider.name,
@@ -1159,7 +1158,7 @@ export class MemoryExtractor {
 
     // Get profile from registry
     const profile = this.profileRegistry.get(options.profile);
-    
+
     if (!profile) {
       this.config.logger.warn(
         `Profile '${options.profile}' not found, using default config`
@@ -1198,12 +1197,12 @@ export class MemoryExtractor {
    */
   private getMemoryTypeConfig(type: string): MemoryTypeConfig | undefined {
     const normalizedType = type.toLowerCase();
-    
+
     // Check custom types first
     if (this.customMemoryTypes.has(normalizedType)) {
       return this.customMemoryTypes.get(normalizedType);
     }
-    
+
     // Fall back to default types
     return DEFAULT_MEMORY_TYPES[normalizedType];
   }
@@ -1315,7 +1314,7 @@ export class MemoryExtractor {
    */
   private deduplicateRelationships(relationships: ExtractedRelationship[]): ExtractedRelationship[] {
     const seen = new Map<string, ExtractedRelationship>();
-    
+
     for (const rel of relationships) {
       if (!seen.has(rel.id)) {
         seen.set(rel.id, rel);
@@ -1327,7 +1326,7 @@ export class MemoryExtractor {
         }
       }
     }
-    
+
     return Array.from(seen.values());
   }
 
@@ -1336,13 +1335,13 @@ export class MemoryExtractor {
    */
   private buildChunkingConfig(): ChunkingConfig {
     const chunkingConfig = this.config.chunking!;
-    
+
     // Set sensible defaults
     const maxTokensPerChunk = chunkingConfig.maxTokensPerChunk ?? 100000;
     const overlapPercentage = chunkingConfig.overlapPercentage ?? 0.1;
     const overlapTokens = chunkingConfig.overlapTokens ?? Math.floor(maxTokensPerChunk * overlapPercentage);
     const minChunkSize = Math.floor(maxTokensPerChunk * 0.2); // 20% of max
-    
+
     return {
       maxTokensPerChunk,
       overlapTokens,
@@ -1361,13 +1360,13 @@ export class MemoryExtractor {
   private getModelParams(): ModelParams {
     // Try to infer model from provider name
     let defaultModel = 'gpt-4o-mini'; // OpenAI default
-    
+
     if (this.config.provider.name === 'gemini') {
       defaultModel = 'gemini-3-pro-preview';
     } else if (this.config.provider.name === 'anthropic') {
       defaultModel = 'claude-3-sonnet-20240229';
     }
-    
+
     return {
       model: defaultModel,
       temperature: 0.1,
@@ -1431,11 +1430,11 @@ export type { ExtractionStrategy, StrategyConfig, RawExtractionResult } from './
 export { StructuredOutputStrategy, ChunkContext, createChunkSummary } from './strategies/structured.js';
 export { MemoryValidator, ValidatorConfig } from './validator.js';
 export { MemoryDeduplicator } from './deduplicator.js';
-export { 
-  DEFAULT_MEMORY_TYPES, 
-  getMemoryTypeConfig, 
-  getDefaultMemoryTypes, 
-  isDefaultMemoryType 
+export {
+  DEFAULT_MEMORY_TYPES,
+  getMemoryTypeConfig,
+  getDefaultMemoryTypes,
+  isDefaultMemoryType
 } from './memory-types.js';
 export { IncrementalExtractor } from './incremental.js';
 export { ProfileRegistry } from './profiles.js';
@@ -1459,3 +1458,15 @@ export type { TokenCountMethod, TokenCountResult } from './chunking/token-counte
 export { SlidingWindowStrategy } from './chunking/strategies/sliding-window.js';
 export { ConversationBoundaryStrategy } from './chunking/strategies/conversation-boundary.js';
 export { SemanticStrategy } from './chunking/strategies/semantic.js';
+
+//
+// MAKER Reliability Layer
+//
+
+export { makerConfig } from './maker-config.js';
+export { buildExtractionPrompt } from './maker-prompts.js';
+export {
+  makerReliableExtractMemory,
+  type ExtractedMemory as MakerExtractedMemory,
+  type MakerLLMProvider,
+} from './maker-extractor.js';

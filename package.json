@@ -1,0 +1,35 @@
+{
+  "name": "handoff-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace=@handoff/frontend",
+    "dev:backend": "npm run dev --workspace=@handoff/backend",
+    "build:shared": "npm run build --workspace=@handoff/shared",
+    "build:frontend": "npm run build --workspace=@handoff/frontend",
+    "build:backend": "npm run build --workspace=@handoff/backend",
+    "build:all": "npm run build:shared && npm run build:frontend && npm run build:backend",
+    "deploy:frontend": "bash scripts/deploy-frontend.sh",
+    "deploy:backend": "bash scripts/deploy-backend.sh",
+    "deploy:all": "npm run build:all && npm run deploy:backend && npm run deploy:frontend",
+    "setup:secrets": "bash scripts/setup-secrets.sh",
+    "setup:vectorize": "bash scripts/setup-vectorize.sh",
+    "test:deployment": "bash scripts/test-deployment.sh",
+    "lint:frontend": "npm run lint --workspace=@handoff/frontend",
+    "test:backend": "npm run test --workspace=@handoff/backend"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "packages/core/*",
+    "apps/ghost/*"
+  ],
+  "devDependencies": {
+    "typescript": "^5.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
+}

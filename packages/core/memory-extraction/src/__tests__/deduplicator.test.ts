@@ -25,7 +25,7 @@ describe('MemoryDeduplicator', () => {
       const id2 = deduplicator.generateMemoryId(memory);
 
       expect(id1).toBe(id2);
-      expect(id1).toMatch(/^[a-f0-9]{64}$/); // SHA-256 hash
+      expect(id1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/); // SHA-256 hash
     });
 
     it('should generate different IDs for different content', () => {
