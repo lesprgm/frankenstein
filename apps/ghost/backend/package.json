@@ -1,0 +1,53 @@
+{
+  "name": "@ghost/backend",
+  "version": "0.1.0",
+  "description": "Ghost backend API server",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "predev": "lsof -ti :4000 | xargs kill -9 2>/dev/null || true",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest --run --no-file-parallelism",
+    "test:watch": "vitest",
+    "maker-ghost-demo": "tsx scripts/maker-ghost-demo.ts",
+    "maker-ghost-max-difficulty": "tsx scripts/maker-ghost-max-difficulty.ts"
+  },
+  "keywords": [
+    "ghost",
+    "api",
+    "backend"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@hono/node-server": "^1.4.1",
+    "@memorylayer/context-engine": "*",
+    "@memorylayer/memory-extraction": "*",
+    "@memorylayer/storage": "*",
+    "dotenv": "^16.3.1",
+    "hono": "^3.11.7",
+    "mammoth": "^1.11.0",
+    "pdf-parse": "^2.4.5",
+    "xlsx": "^0.18.5",
+    "zod": "^3.22.4"
+  },
+  "optionalDependencies": {
+    "@xenova/transformers": "^2.17.2",
+    "better-sqlite3": "*"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.7.0",
+    "typescript": "^5.9.3",
+    "vitest": "^1.0.4"
+  }
+}
