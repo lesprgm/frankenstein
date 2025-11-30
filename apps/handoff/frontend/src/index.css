@@ -1,0 +1,323 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .animate-slide-in-right {
+    animation: slideInRight 0.3s ease-out;
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@layer base {
+  :root {
+    /* Design System - "Pristine Air" (Apple Inspired) */
+
+    /* Colors - Modern Professional Palette */
+    /* Light Mode Defaults */
+    --color-bg-primary: #ffffff;
+    --color-bg-secondary: #f5f5f7;
+    /* Apple's system gray 6 */
+    --color-bg-tertiary: #e5e5ea;
+    /* Apple's system gray 5 */
+
+    --color-text-primary: #1d1d1f;
+    /* Almost black */
+    --color-text-secondary: #86868b;
+    /* Apple's secondary label color */
+    --color-text-tertiary: #aeaeb2;
+
+    --color-border-subtle: rgba(0, 0, 0, 0.05);
+    --color-border-focus: #0071e3;
+
+    /* Accents - Professional & Clear */
+    --color-accent-blue: #0071e3;
+    --color-accent-indigo: #5e5ce6;
+    --color-accent-green: #34c759;
+    --color-accent-orange: #ff9500;
+    --color-accent-red: #ff3b30;
+
+    /* Semantic Colors */
+    --color-entity: rgba(0, 113, 227, 0.1);
+    --color-entity-text: #0071e3;
+    --color-fact: rgba(52, 199, 89, 0.1);
+    --color-fact-text: #248a3d;
+    --color-decision: rgba(94, 92, 230, 0.1);
+    --color-decision-text: #5e5ce6;
+
+    /* Spacing - 4px baseline grid */
+    --space-1: 0.25rem;
+    /* 4px */
+    --space-2: 0.5rem;
+    /* 8px */
+    --space-3: 0.75rem;
+    /* 12px */
+    --space-4: 1rem;
+    /* 16px */
+    --space-6: 1.5rem;
+    /* 24px */
+    --space-8: 2rem;
+    /* 32px */
+    --space-12: 3rem;
+    /* 48px */
+
+    /* Border Radius - Smooth corners */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    --radius-xl: 24px;
+    --radius-full: 9999px;
+
+    /* Typography - San Francisco Style */
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    --text-xs: 0.75rem;
+    /* 12px */
+    --text-sm: 0.8125rem;
+    /* 13px - Apple standard */
+    --text-base: 0.9375rem;
+    /* 15px - Apple standard */
+    --text-lg: 1.0625rem;
+    /* 17px - Apple standard */
+    --text-xl: 1.25rem;
+    /* 20px */
+    --text-2xl: 1.75rem;
+    /* 28px */
+    --text-3xl: 2.125rem;
+    /* 34px */
+
+    --font-normal: 400;
+    --font-medium: 500;
+    --font-semibold: 600;
+    --font-bold: 700;
+
+    /* Shadows - "Air" System (Subtle & Refined) */
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.03);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.02);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.04);
+
+    /* Transitions */
+    --transition-fast: 150ms cubic-bezier(0.25, 0.1, 0.25, 1);
+    --transition-base: 250ms cubic-bezier(0.25, 0.1, 0.25, 1);
+    --transition-bounce: 400ms cubic-bezier(0.16, 1, 0.3, 1);
+    /* Apple-like spring */
+
+    /* Glassmorphism */
+    --glass-blur: blur(20px);
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.5);
+  }
+
+  /* Dark mode disabled - always use light mode
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg-primary: #000000;
+      --color-bg-secondary: #1c1c1e;
+      --color-bg-tertiary: #2c2c2e;
+
+      --color-text-primary: #f5f5f7;
+      --color-text-secondary: #86868b;
+      --color-text-tertiary: #636366;
+
+      --color-border-subtle: rgba(255, 255, 255, 0.08);
+      --color-border-focus: #0a84ff;
+
+      --color-accent-blue: #0a84ff;
+      --color-accent-indigo: #5e5ce6;
+      --color-accent-green: #30d158;
+      --color-accent-orange: #ff9f0a;
+      --color-accent-red: #ff453a;
+
+      --color-entity: rgba(10, 132, 255, 0.15);
+      --color-entity-text: #409cff;
+      --color-fact: rgba(48, 209, 88, 0.15);
+      --color-fact-text: #30d158;
+      --color-decision: rgba(94, 92, 230, 0.15);
+      --color-decision-text: #7d7aff;
+
+      --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
+
+      --glass-bg: rgba(28, 28, 30, 0.7);
+      --glass-border: rgba(255, 255, 255, 0.1);
+    }
+  }
+  */
+
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    font-family: var(--font-sans);
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Focus Rings - Accessibility with Style */
+  *:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+
+  /* "Clean Slate" Card */
+  .card-clean {
+    background: var(--color-bg-primary);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--color-border-subtle);
+    transition: transform var(--transition-base), box-shadow var(--transition-base);
+  }
+
+  .card-clean:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+
+  /* Glass Panel */
+  .glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  /* iOS Style Segmented Control / Pills */
+  .pill-nav {
+    display: inline-flex;
+    padding: 2px;
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+  }
+
+  .pill-item {
+    padding: 4px 12px;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--color-text-secondary);
+    border-radius: 7px;
+    /* Slightly less than container */
+    transition: all var(--transition-fast);
+    cursor: pointer;
+  }
+
+  .pill-item.active {
+    background: var(--color-bg-primary);
+    color: var(--color-text-primary);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .pill-item:not(.active):hover {
+    color: var(--color-text-primary);
+  }
+
+  /* Type Badges - Refined */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    border-radius: var(--radius-sm);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  .badge.entity {
+    background: var(--color-entity);
+    color: var(--color-entity-text);
+  }
+
+  .badge.fact {
+    background: var(--color-fact);
+    color: var(--color-fact-text);
+  }
+
+  .badge.decision {
+    background: var(--color-decision);
+    color: var(--color-decision-text);
+  }
+
+  /* Buttons - iOS Style */
+  .btn-ios-primary {
+    background: var(--color-accent-blue);
+    color: white;
+    font-weight: var(--font-medium);
+    font-size: var(--text-sm);
+    padding: 8px 16px;
+    border-radius: var(--radius-full);
+    transition: all var(--transition-fast);
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .btn-ios-primary:hover {
+    opacity: 0.9;
+    transform: scale(1.02);
+  }
+
+  .btn-ios-primary:active {
+    transform: scale(0.98);
+  }
+
+  .btn-ios-secondary {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    font-weight: var(--font-medium);
+    font-size: var(--text-sm);
+    padding: 8px 16px;
+    border-radius: var(--radius-full);
+    transition: all var(--transition-fast);
+    border: none;
+    cursor: pointer;
+  }
+
+  .btn-ios-secondary:hover {
+    background: var(--color-bg-secondary);
+    /* Darker in light mode */
+  }
+
+  /* Inputs - Clean */
+  .input-clean {
+    background: var(--color-bg-tertiary);
+    /* Gray background like iOS search */
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    padding: 8px 12px;
+    font-size: var(--text-base);
+    color: var(--color-text-primary);
+    transition: all var(--transition-fast);
+    width: 100%;
+  }
+
+  .input-clean:focus {
+    background: var(--color-bg-primary);
+    border-color: var(--color-accent-blue);
+    box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
+    outline: none;
+  }
+}
