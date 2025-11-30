@@ -19,14 +19,12 @@ out/
 wrangler.toml.local
 
 # Environment files
-# .env (ignore globally disabled)
-# .env.*
+.env
+.env.*
 !.env.example
-!apps/ghost/backend/.env
-!apps/ghost/backend/.env.*
 !.env.test
 .dev.vars
-# *.env
+*.env
 
 # Logs
 logs/
@@ -87,3 +85,9 @@ __pycache__/
 apps/ghost/daemon/config.json
 apps/ghost/daemon/out/
 apps/ghost/daemon/make/
+apps/ghost/daemon/screenshots/
+apps/ghost/backend/memory.db
+apps/ghost/backend/memory.db-journal
+apps/ghost/backend/vectors/
+apps/handoff/backend/.wrangler/
+apps/handoff/backend/backfill.log

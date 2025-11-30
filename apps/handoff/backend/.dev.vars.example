@@ -1,0 +1,14 @@
+# Copy this file to .dev.vars and fill in your values
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
+VECTORIZE_ACCOUNT_ID=your_vectorize_account_id
+VECTORIZE_API_TOKEN=your_vectorize_api_token
+OPENAI_API_KEY=your_openai_api_key
+
+# OpenAI Models (optional - defaults shown)
+OPENAI_CHAT_MODEL=gpt-5-nano
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_EXTRACTION_MODEL_PERSONAL=gpt-5-nano
+OPENAI_EXTRACTION_MODEL_TEAM=gpt-5-nano
+
+JWT_SECRET=your_jwt_secret
