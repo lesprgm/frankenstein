@@ -36,9 +36,9 @@ if (result.ok) {
 
 | Provider | Format | Status |
 |----------|--------|--------|
-| ChatGPT | JSON export | ✅ Supported |
-| Claude | JSON export | ✅ Supported |
-| Custom | Adapter API | ✅ Extensible |
+| ChatGPT | JSON export | Supported |
+| Claude | JSON export | Supported |
+| Custom | Adapter API | Extensible |
 
 ## API Overview
 
@@ -111,6 +111,36 @@ npm test
 # Watch mode
 npm run test:watch
 ```
+
+## Development Approach
+
+This package was developed using Kiro's spec-driven development methodology:
+
+### Spec-Driven Development with Kiro
+
+The `.kiro/specs/core-chat-capture/` directory contains detailed specifications:
+
+- **requirements.md** - Requirements for multi-provider conversation capture, normalization, and extensibility
+- **design.md** - Architecture including parser registry, provider adapters, and unified data models
+- **tasks.md** - Granular implementation task breakdown
+
+### Key Spec-Driven Decisions
+
+1. **Provider-Agnostic Design**: Unified `NormalizedConversation` format across all providers
+2. **Parser Registry**: Extensible system for registering custom provider parsers
+3. **Type-Safe Validation**: Full TypeScript support with schema validation
+4. **Flexible Ingestion**: Support for both file imports and streaming API captures
+
+### Development Process
+
+1. **Spec Creation**: Defined conversation normalization schema and provider adapter interfaces
+2. **AI-Assisted Implementation**: ~80% of initial implementation generated from specs using Kiro
+   - Parser registry system
+   - ChatGPT and Claude adapters
+   - Normalization logic
+3. **Manual Refinement**: Added validation, error handling, and additional provider support
+
+This approach enabled rapid addition of new providers while maintaining format consistency.
 
 ## License
 

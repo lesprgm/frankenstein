@@ -149,6 +149,17 @@ memoryTypes: ['task', 'requirement', 'bug', 'feature']
 - [Architecture Overview](../../docs/ARCHITECTURE.md)
 - [Full Documentation](../README.md)
 
+## Development Approach
+
+The MemoryLayer core packages were developed using Kiro's spec-driven development methodology. Each package has detailed specifications in `.kiro/specs/`:
+
+- `core-storage-layer/` - Storage package specs
+- `core-memory-extraction/` - Extraction package specs  
+- `core-context-engine/` - Context engine specs
+- `core-chat-capture/` - Chat capture specs
+
+See the [root README](../../README.md#development-approach) for complete details on the Kiro spec-driven development process, or check individual package READMEs for package-specific information.
+
 ## License
 
 MIT

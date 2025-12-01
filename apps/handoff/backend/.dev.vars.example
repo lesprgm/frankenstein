@@ -12,3 +12,9 @@ OPENAI_EXTRACTION_MODEL_PERSONAL=gpt-5-nano
 OPENAI_EXTRACTION_MODEL_TEAM=gpt-5-nano
 
 JWT_SECRET=your_jwt_secret
+
+# Optional MAKER overrides (if you want to tweak reliability layer)
+MAKER_ENABLED=true
+MAKER_MODEL=gemini-2.0-flash-lite
+MAKER_REPLICAS=3
+MAKER_TEMPERATURE=0.4

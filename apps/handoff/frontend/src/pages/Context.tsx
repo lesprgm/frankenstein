@@ -46,11 +46,12 @@ export default function Context() {
     try {
       const result = await api.getMemories({
         workspaceId: currentWorkspace.id,
-        limit: 100
+        limit: 100,
+        type: filter === 'all' ? undefined : filter,
       })
       setMemories(result.memories)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load memories')
+      setError('Failed to load memories')
     } finally {
       setIsLoading(false)
     }
