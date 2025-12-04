@@ -305,6 +305,186 @@ See [Test Documentation](./src/__tests__/README.md) for details.
 
 *Times are approximate and vary by hardware/network*
 
+## Memory Lifecycle Management
+
+MemoryLayer includes automatic memory lifecycle management to keep your memory store relevant, performant, and storage-efficient.
+
+### Features
+
+- **Time-Based Decay**: Memories decay over time, prioritizing recent information
+- **Importance Scoring**: Frequently accessed memories persist longer
+- **Automatic Archival**: Inactive memories move to cold storage
+- **Configurable Retention**: Per-memory-type TTL policies
+- **Pinned Memories**: Manual override to prevent archival
+- **Background Jobs**: Automated evaluation and cleanup
+
+### Lifecycle States
+
+Memories transition through these states:
+
+- **active**: Fresh, frequently accessed memories
+- **decaying**: Memories with low decay score (visual indicator, still searchable)
+- **archived**: Moved to cold storage (retrievable via `includeArchived` flag)
+- **expired**: Past retention period, eligible for deletion
+- **pinned**: Manually preserved, exempt from automatic transitions
+
+### Quick Start
+
+```typescript
+import { LifecycleManager } from '@memorylayer/storage';
+
+// Initialize lifecycle manager
+const lifecycleManager = new LifecycleManager(
+  storageAdapter,
+  vectorizeAdapter,
+  {
+    enabled: true,
+    defaultTTL: 90 * 24 * 60 * 60 * 1000, // 90 days
+    decayFunction: DECAY_FUNCTIONS.exponential(0.1),
+    decayThreshold: 0.5,
+    importanceWeights: {
+      accessFrequency: 0.4,
+      confidence: 0.3,
+      relationshipCount: 0.3,
+    },
+    evaluationInterval: 60 * 60 * 1000, // 1 hour
+    batchSize: 100,
+    archiveRetentionPeriod: 365 * 24 * 60 * 60 * 1000, // 1 year
+    auditRetentionPeriod: 30 * 24 * 60 * 60 * 1000, // 30 days
+    retentionPolicies: new Map([
+      ['entity', { ttl: 180 * 24 * 60 * 60 * 1000, importanceMultiplier: 2.0, gracePeriod: 7 * 24 * 60 * 60 * 1000 }],
+      ['fact', { ttl: 60 * 24 * 60 * 60 * 1000, importanceMultiplier: 1.5, gracePeriod: 3 * 24 * 60 * 60 * 1000 }],
+    ]),
+  }
+);
+
+// Start background jobs
+lifecycleManager.startBackgroundJobs();
+```
+
+### Configuration Options
+
+| Option | Type | Description | Default |
+|--------|------|-------------|---------|
+| `enabled` | boolean | Enable lifecycle management | `true` |
+| `defaultTTL` | number | Default time-to-live (ms) | 90 days |
+| `decayFunction` | DecayFunction | Time-based decay algorithm | exponential(0.1) |
+| `decayThreshold` | number | Threshold for decaying state (0-1) | 0.5 |
+| `importanceWeights` | ImportanceWeights | Weights for importance scoring | See below |
+| `evaluationInterval` | number | Background job frequency (ms) | 1 hour |
+| `batchSize` | number | Memories per batch (1-10000) | 100 |
+| `archiveRetentionPeriod` | number | Archive retention before expiry (ms) | 1 year |
+| `auditRetentionPeriod` | number | Lifecycle event retention (ms) | 30 days |
+| `retentionPolicies` | Map | Per-type TTL policies | empty |
+
+**ImportanceWeights**:
+- `accessFrequency` (0-1): Weight for access frequency
+- `confidence` (0-1): Weight for confidence score
+- `relationshipCount` (0-1): Weight for relationship count
+
+### Usage Examples
+
+#### Pinning Memories
+
+```typescript
+// Pin a critical memory to prevent archival
+await storageClient.updateMemoryLifecycle(memoryId, workspaceId, {
+  pinned: true,
+});
+
+// Unpin a memory
+await storageClient.updateMemoryLifecycle(memoryId, workspaceId, {
+  pinned: false,
+});
+```
+
+#### Searching Archived Memories
+
+```typescript
+// Include archived memories in search
+const results = await storageClient.searchMemories(workspaceId, {
+  vector: queryEmbedding,
+  limit: 10,
+  includeArchived: true, // Search both active and archived
+});
+```
+
+#### Querying by Lifecycle State
+
+```typescript
+// Get all decaying memories
+const decaying = await storageClient.getMemoriesByLifecycleState(
+  workspaceId,
+  'decaying',
+  { limit: 50, offset: 0 }
+);
+
+// Get all pinned memories
+const pinned = await storageClient.getMemoriesByLifecycleState(
+  workspaceId,
+  'pinned',
+  { limit: 100 }
+);
+```
+
+#### Manual State Transitions
+
+```typescript
+// Manually archive a memory
+await storageClient.updateMemoryLifecycle(memoryId, workspaceId, {
+  lifecycle_state: 'archived',
+});
+
+// Restore archived memory to active
+await storageClient.updateMemoryLifecycle(memoryId, workspaceId, {
+  lifecycle_state: 'active',
+});
+```
+
+#### Metrics & Monitoring
+
+```typescript
+// Get lifecycle metrics for a workspace
+const metricsResult = await lifecycleManager.getMetrics(workspaceId);
+
+if (metricsResult.ok) {
+  const metrics = metricsResult.value;
+  console.log('Total memories:', metrics.totalMemories);
+  console.log('Pinned memories:', metrics.pinnedMemories);
+  console.log('State counts:', metrics.stateCounts);
+  console.log('Average decay score:', metrics.averageDecayScore);
+  console.log('Storage by state:', metrics.storageByState);
+}
+```
+
+### Decay Functions
+
+Built-in decay functions:
+
+```typescript
+import { DECAY_FUNCTIONS } from '@memorylayer/storage';
+
+// Exponential decay (recommended)
+const expDecay = DECAY_FUNCTIONS.exponential(0.1); // lambda: decay rate
+
+// Linear decay
+const linearDecay = DECAY_FUNCTIONS.linear(90 * 24 * 60 * 60 * 1000); // decay period
+
+// Step decay
+const stepDecay = DECAY_FUNCTIONS.step(
+  [7 * 24 * 60 * 60 * 1000, 30 * 24 * 60 * 60 * 1000], // intervals
+  [1.0, 0.5] // scores
+);
+```
+
+### Best Practices
+
+1. **Set Appropriate TTLs**: Configure per-type retention policies based on your use case
+2. **Monitor Metrics**: Regularly check lifecycle metrics to optimize settings
+3. **Pin Critical Data**: Use pinning for memories that should never be archived
+4. **Adjust Decay Rates**: Tune decay function parameters based on access patterns
+5. **Enable Background Jobs**: Ensure lifecycle manager is started in production
+
 ## Development
 
 ```bash
@@ -320,6 +500,33 @@ npm test
 # Watch
 npm run test:watch
 ```
+
+## Development Approach
+
+This package was developed using Kiro's spec-driven development methodology:
+
+### Spec-Driven Development with Kiro
+
+The `.kiro/specs/core-storage-layer/` directory contains detailed specifications:
+
+- **requirements.md** - Core requirements including workspace scoping, multi-backend support, and vector search
+- **design.md** - Complete architecture including `StorageClient` API, database schema, and error handling patterns
+- **tasks.md** - Granular implementation task breakdown
+
+### Key Spec-Driven Decisions
+
+1. **Result Types Over Exceptions**: The spec defined `Result<T, StorageError>` pattern for explicit error handling
+2. **Workspace-First Design**: All query methods require `workspace_id` to enforce isolation
+3. **Separate Vector Store**: Embeddings in Vectorize, metadata in Postgres/SQLite
+4. **Single Client Interface**: `StorageClient` as the only public API, internally delegating to adapters
+
+### Development Process
+
+1. **Spec Creation**: Defined complete storage layer API, data models, and backend adapters
+2. **AI-Assisted Implementation**: ~80% of initial implementation generated from specs using Kiro
+3. **Manual Refinement**: Added comprehensive tests, migrations, and production optimizations
+
+This approach enabled rapid prototyping while maintaining consistent APIs and clear separation of concerns.
 
 ## License
 

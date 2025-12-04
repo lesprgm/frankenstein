@@ -69,16 +69,51 @@ export class ContextBuilder {
         summary: m.memory.summary.substring(0, 80)
       })));
 
-      // Filter out conversational echoes (fact.command/response)
-      let memories = converted.filter((entry) => !this.isConversationMemory(entry.memory.type));
+      // Filter out conversational echoes and meta-commentary
+      let memories = converted.filter((entry) => {
+        // Exclude conversation-type memories (fact.command, fact.response)
+        if (this.isConversationMemory(entry.memory.type)) {
+          return false;
+        }
+        
+        // Filter out any memory that looks like meta-commentary about the conversation
+        // This catches bad fact.session memories that describe what happened rather than facts
+        const summary = (entry.memory.summary || '').toLowerCase();
+        const metaPatterns = [
+          'the user was inquiring',
+          'the user inquired',
+          'the user was asking',
+          'the user asked',
+          'user asked about',
+          'user inquired',
+          'the assistant responded',
+          'the assistant confirmed',
+          'the assistant was',
+          'the assistant provided',
+          'assistant responded',
+          'in response to',
+          'previously attempted',
+          'did not provide',
+          'to facilitate further',
+          'presumably to',
+        ];
+        
+        for (const pattern of metaPatterns) {
+          if (summary.includes(pattern)) {
+            console.log('[ContextBuilder] Excluding meta-commentary:', entry.memory.id, pattern);
+            return false;
+          }
+        }
+        
+        return true;
+      });
 
-      console.log('[ContextBuilder] After conversation filter:', memories.length);
+      console.log('[ContextBuilder] After conversation/session filter:', memories.length);
 
-      // Boost fact-type memories to prioritize content over metadata
+      // Boost fact-type and doc.chunk memories to prioritize content over metadata
       memories = memories.map(entry => {
-        if (entry.memory.type === 'fact') {
+        if (entry.memory.type === 'fact' || entry.memory.type === 'doc.chunk') {
           // Boost content-based memories
-
           return {
             ...entry,
             score: entry.score * 1.5 // Boost by 50%

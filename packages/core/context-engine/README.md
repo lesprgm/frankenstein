@@ -206,6 +206,40 @@ npm run test:watch
 - Graph traversal (depth=2): ~50-200ms
 - Context building (complete): ~100-300ms
 
+## Development Approach
+
+This package was developed using Kiro's spec-driven development methodology:
+
+### Spec-Driven Development with Kiro
+
+The `.kiro/specs/core-context-engine/` directory contains detailed specifications:
+
+- **requirements.md** - Requirements for semantic search, context building, token budgeting, and relationship traversal
+- **design.md** - Architecture including ranking algorithms, template system, and graph traversal strategies
+- **tasks.md** - Granular implementation task breakdown
+
+### Key Spec-Driven Decisions
+
+1. **Multi-Factor Ranking**: Weighted combination of similarity, recency, confidence, and relationship strength
+2. **Token Budget Management**: Automatic context trimming to fit LLM token limits
+3. **Template System**: Pre-built templates (concise, detailed, structured, markdown) with custom template support
+4. **Graph Traversal**: Relationship-aware context expansion with configurable depth
+5. **Embedding Cache**: `(query, model)` keyed cache to avoid redundant embedding calls
+
+### Development Process
+
+1. **Spec Creation**: Defined context building pipeline, ranking algorithms, and template interfaces
+2. **AI-Assisted Implementation**: ~80% of initial implementation generated from specs using Kiro
+   - Ranking and scoring logic
+   - Template system and formatting
+   - Graph traversal algorithms
+3. **Manual Refinement**: 
+   - Performance optimizations for large vector searches
+   - Comprehensive test coverage
+   - Token counting accuracy improvements
+
+This approach enabled flexible context building while maintaining consistent performance characteristics.
+
 ## License
 
 MIT

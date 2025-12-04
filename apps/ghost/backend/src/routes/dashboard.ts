@@ -9,6 +9,130 @@ const dashboard = new Hono();
 const DEFAULT_LIMIT = 50;
 
 /**
+ * Helper function to fetch a command by ID
+ */
+async function fetchCommandById(commandId: string) {
+  const storage = storageService.getHealth();
+  if (!storage.ok) {
+    return { error: 'Storage unavailable', status: 503 };
+  }
+
+  try {
+    const { db } = storage.value;
+
+    // Fetch the command basic info
+    const command = db.prepare(`
+      SELECT 
+        id,
+        text,
+        assistant_text,
+        timestamp as created_at
+      FROM commands
+      WHERE id = ?
+      LIMIT 1
+    `).get(commandId) as {
+      id: string;
+      text: string;
+      assistant_text: string;
+      created_at: string;
+    } | undefined;
+
+    if (!command) {
+      console.log('[Dashboard] Command not found:', commandId);
+      return { error: 'Command not found', status: 404 };
+    }
+
+    // Fetch actions
+    const actions = db.prepare(`
+      SELECT type, params, status, executed_at
+      FROM actions
+      WHERE command_id = ?
+    `).all(commandId).map((a: any) => ({
+      action: {
+        type: a.type,
+        params: JSON.parse(a.params)
+      },
+      status: a.status,
+      executedAt: a.executed_at
+    }));
+
+    // Fetch memories used
+    const memories = db.prepare(`
+      SELECT 
+        m.id,
+        m.type,
+        m.content as summary,
+        m.confidence as score,
+        m.metadata
+      FROM command_memories cm
+      JOIN memories m ON cm.memory_id = m.id
+      WHERE cm.command_id = ?
+    `).all(commandId).map((m: any) => ({
+      id: m.id,
+      type: m.type,
+      score: m.score,
+      summary: m.summary,
+      metadata: m.metadata ? JSON.parse(m.metadata) : undefined
+    }));
+
+    console.log('[Dashboard] Found command:', commandId, 'with', memories.length, 'memories');
+
+    return {
+      data: {
+        ...command,
+        actions,
+        memories_used: memories
+      }
+    };
+  } catch (err) {
+    console.error('Failed to fetch command:', err);
+    return { error: 'Failed to fetch command', status: 500 };
+  }
+}
+
+/**
+ * GET /api/dashboard/commands/:id
+ * Fetch a specific command by ID with full memory graph
+ */
+dashboard.get('/commands/:id', async (c) => {
+  const commandId = c.req.param('id');
+  
+  if (!commandId) {
+    return c.json({ error: 'Command ID required' }, 400);
+  }
+
+  const result = await fetchCommandById(commandId);
+  if (result.error) {
+    return c.json({ error: result.error }, result.status as any);
+  }
+  return c.json(result.data);
+});
+
+/**
+ * GET /api/commands/:id (when mounted at /api/commands)
+ * Fetch a specific command by ID with full memory graph
+ * NOTE: This route handles direct /api/commands/:id requests
+ */
+dashboard.get('/:id', async (c) => {
+  const commandId = c.req.param('id');
+
+  // Skip if this looks like a known sub-route (only for /api/dashboard mount)
+  if (commandId === 'commands' || commandId === 'stats' || commandId === 'stream-latest') {
+    return c.notFound();
+  }
+
+  if (!commandId) {
+    return c.json({ error: 'Command ID required' }, 400);
+  }
+
+  const result = await fetchCommandById(commandId);
+  if (result.error) {
+    return c.json({ error: result.error }, result.status as any);
+  }
+  return c.json(result.data);
+});
+
+/**
  * GET /api/dashboard/commands
  * Get recent commands with memories and actions
  */
@@ -133,90 +257,5 @@ function chunkText(text: string, wordsPerChunk: number): string[] {
   }
   return chunks;
 }
-
-/**
- * GET /api/commands/:id
- * Fetch a specific command by ID with full memory graph
- */
-dashboard.get('/commands/:id', async (c) => {
-  const commandId = c.req.param('id');
-
-  if (!commandId) {
-    return c.json({ error: 'Command ID required' }, 400);
-  }
-
-  const storage = storageService.getHealth();
-  if (!storage.ok) {
-    return c.json({ error: 'Storage unavailable' }, 503);
-  }
-
-  try {
-    const { db } = storage.value;
-
-    // Fetch the command with all its details
-    // Fetch the command basic info
-    const command = db.prepare(`
-      SELECT 
-        id,
-        text,
-        assistant_text,
-        timestamp as created_at
-      FROM commands
-      WHERE id = ?
-      LIMIT 1
-    `).get(commandId) as {
-      id: string;
-      text: string;
-      assistant_text: string;
-      created_at: string;
-    } | undefined;
-
-    if (!command) {
-      return c.json({ error: 'Command not found' }, 404);
-    }
-
-    // Fetch actions
-    const actions = db.prepare(`
-      SELECT type, params, status, executed_at
-      FROM actions
-      WHERE command_id = ?
-    `).all(commandId).map((a: any) => ({
-      action: {
-        type: a.type,
-        params: JSON.parse(a.params)
-      },
-      status: a.status,
-      executedAt: a.executed_at
-    }));
-
-    // Fetch memories used
-    const memories = db.prepare(`
-      SELECT 
-        m.id,
-        m.type,
-        m.content as summary,
-        m.confidence as score,
-        m.metadata
-      FROM command_memories cm
-      JOIN memories m ON cm.memory_id = m.id
-      WHERE cm.command_id = ?
-    `).all(commandId).map((m: any) => ({
-      id: m.id,
-      type: m.type,
-      score: m.score,
-      summary: m.summary,
-      metadata: m.metadata ? JSON.parse(m.metadata) : undefined
-    }));
-
-    return c.json({
-      ...command,
-      actions,
-      memories_used: memories
-    });
-  } catch (err) {
-    console.error('Failed to fetch command:', err);
-    return c.json({ error: 'Failed to fetch command' }, 500);
-  }
-});
 
 export default dashboard;

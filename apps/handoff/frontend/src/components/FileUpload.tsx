@@ -18,9 +18,10 @@ export default function FileUpload({ onFileSelect, disabled = false }: FileUploa
       return `File size exceeds 50MB limit (${(file.size / 1024 / 1024).toFixed(2)}MB)`
     }
 
-    // Check file type (should be JSON)
-    if (!file.name.endsWith('.json')) {
-      return 'Only JSON files are supported'
+    // Check file type (JSON or ChatGPT HTML export)
+    const lower = file.name.toLowerCase()
+    if (!(lower.endsWith('.json') || lower.endsWith('.html') || lower.endsWith('.htm'))) {
+      return 'Only JSON or HTML exports are supported'
     }
 
     return null
@@ -92,56 +93,90 @@ export default function FileUpload({ onFileSelect, disabled = false }: FileUploa
         onDrop={handleDrop}
         onClick={handleClick}
         className={`
-          border-2 border-dashed rounded-lg p-12 text-center cursor-pointer
-          transition-colors duration-200
+          group relative border-2 border-dashed rounded-xl p-12 text-center cursor-pointer
+          transition-all duration-300 ease-out overflow-hidden
           ${isDragging 
-            ? 'border-blue-500 bg-blue-50' 
-            : 'border-gray-300 hover:border-gray-400 bg-white'
+            ? 'border-blue-500 bg-blue-50 scale-[1.02]' 
+            : 'border-gray-200 hover:border-blue-400 hover:bg-gray-50 bg-white'
           }
           ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
         `}
       >
+        {/* Subtle gradient background on hover */}
+        <div className={`
+          absolute inset-0 bg-gradient-to-br from-blue-50/50 to-indigo-50/50 
+          transition-opacity duration-300
+          ${isDragging ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'}
+        `} />
+
         <input
           ref={fileInputRef}
           type="file"
-          accept=".json"
+          accept=".json,.html,.htm"
           onChange={handleFileInputChange}
           className="hidden"
           disabled={disabled}
           aria-label="Upload file"
         />
         
-        <svg
-          className="mx-auto h-12 w-12 text-gray-400"
-          stroke="currentColor"
-          fill="none"
-          viewBox="0 0 48 48"
-          aria-hidden="true"
-        >
-          <path
-            d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        {/* Icon */}
+        <div className={`
+          relative mx-auto w-16 h-16 rounded-2xl flex items-center justify-center
+          transition-all duration-300 ease-out
+          ${isDragging 
+            ? 'bg-blue-500 scale-110' 
+            : 'bg-gray-100 group-hover:bg-blue-100 group-hover:scale-105'
+          }
+        `}>
+          <svg
+            className={`h-8 w-8 transition-colors duration-300 ${
+              isDragging ? 'text-white' : 'text-gray-400 group-hover:text-blue-500'
+            }`}
+            stroke="currentColor"
+            fill="none"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.5}
+              d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+            />
+          </svg>
+        </div>
         
-        <div className="mt-4">
-          <p className="text-sm text-gray-600">
-            <span className="font-medium text-blue-600 hover:text-blue-500">
+        <div className="relative mt-6 space-y-2">
+          <p className="text-base text-gray-700">
+            <span className={`
+              font-semibold transition-colors duration-300
+              ${isDragging ? 'text-blue-600' : 'text-blue-600 group-hover:text-blue-700'}
+            `}>
               Click to upload
             </span>
             {' '}or drag and drop
           </p>
-          <p className="text-xs text-gray-500 mt-1">
-            JSON files up to 50MB
+          <p className="text-sm text-gray-500">
+            JSON or HTML exports from ChatGPT, Claude, or other AI assistants
+          </p>
+          <p className="text-xs text-gray-400 mt-1">
+            Up to 50MB
           </p>
         </div>
+
+        {/* Animated border effect on drag */}
+        {isDragging && (
+          <div className="absolute inset-0 border-2 border-blue-500 rounded-xl animate-pulse" />
+        )}
       </div>
 
       {error && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-sm text-red-800">{error}</p>
+        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 animate-fade-in">
+          <span className="text-xl">⚠️</span>
+          <div>
+            <p className="text-sm font-medium text-red-800">Upload Error</p>
+            <p className="text-sm text-red-600 mt-0.5">{error}</p>
+          </div>
         </div>
       )}
     </div>

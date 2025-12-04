@@ -24,8 +24,8 @@ export const makerConfig = {
     /** Timeout per microagent call in milliseconds */
     timeout: parseInt(process.env.MAKER_TIMEOUT || '10000', 10),
 
-    /** Model to use for microagents (defaults to latest Flash model) */
-    model: process.env.MAKER_MODEL || 'gemini-flash-latest',
+    /** Model to use for microagents (defaults to Gemini 2.5 Flash Lite) */
+    model: process.env.MAKER_MODEL || 'gemini-flash-lite-latest',
 } as const;
 
 /**

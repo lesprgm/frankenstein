@@ -55,6 +55,11 @@ export interface Message {
 export type MemoryType = 'entity' | 'fact' | 'decision' | string;
 
 /**
+ * Lifecycle states for memory management
+ */
+export type LifecycleState = 'active' | 'decaying' | 'archived' | 'expired' | 'pinned';
+
+/**
  * Memory model
  */
 export interface Memory {
@@ -67,6 +72,19 @@ export interface Memory {
   metadata: Record<string, any>;
   created_at: Date;
   updated_at: Date;
+
+  // Lifecycle management fields
+  lifecycle_state: LifecycleState;
+  last_accessed_at: Date;
+  access_count: number;
+  importance_score: number;
+  decay_score: number;
+  effective_ttl: number | null; // milliseconds
+  pinned: boolean;
+  pinned_by?: string | null;
+  pinned_at?: Date | null;
+  archived_at?: Date | null;
+  expires_at?: Date | null;
 }
 
 /**
@@ -78,6 +96,42 @@ export interface Relationship {
   to_memory_id: string;
   relationship_type: string;
   confidence: number;
+  created_at: Date;
+}
+
+/**
+ * Archived memory model - memories in cold storage
+ */
+export interface ArchivedMemory {
+  id: string;
+  workspace_id: string;
+  conversation_id: string | null;
+  type: MemoryType;
+  content: string;
+  confidence: number;
+  metadata: Record<string, any>;
+  created_at: Date;
+  updated_at: Date;
+  last_accessed_at: Date;
+  access_count: number;
+  importance_score: number;
+  archived_at: Date;
+  expires_at: Date | null;
+}
+
+/**
+ * Lifecycle event model - audit trail for state transitions
+ */
+export interface LifecycleEvent {
+  id: string;
+  memory_id: string;
+  workspace_id: string;
+  previous_state: LifecycleState;
+  new_state: LifecycleState;
+  reason: string;
+  triggered_by: 'system' | 'user';
+  user_id?: string | null;
+  metadata: Record<string, any>;
   created_at: Date;
 }
 
@@ -105,6 +159,7 @@ export interface SearchQuery {
   types?: MemoryType[];
   dateFrom?: Date;
   dateTo?: Date;
+  includeArchived?: boolean; // Include archived memories in search
 }
 
 export interface SearchResult {

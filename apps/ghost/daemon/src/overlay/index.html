@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Ghost Overlay</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- D3.js loaded locally to avoid CDN dependency issues -->
+    <script src="./d3.v7.min.js"></script>
+</head>
+
+<body>
+    <div id="popup" class="source-popup" style="display: none;">
+        <div class="popup-header">
+            <div class="popup-header-content">
+                <span class="popup-title">Found in</span>
+                <span class="source-count" id="source-count">0 sources</span>
+            </div>
+            <button class="close-btn" id="close-btn">×</button>
+        </div>
+        <div class="sources-list" id="sources-list">
+        </div>
+        <div id="graph-container" class="graph-container" style="display: none;">
+            <svg id="memory-graph" width="100%" height="160"></svg>
+        </div>
+        <div class="popup-footer">
+            <button class="footer-btn" id="dismiss-btn">Dismiss</button>
+        </div>
+    </div>
+    <div id="toast" class="toast">
+        <div class="toast-title" id="toast-title"></div>
+        <div class="toast-body" id="toast-body"></div>
+    </div>
+    <script src="renderer.js"></script>
+</body>
+
+</html>

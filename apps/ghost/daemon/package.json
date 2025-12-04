@@ -4,7 +4,7 @@
   "description": "Ghost voice-activated AI assistant daemon",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "npm run build:ts && electron dist/main.js",
+    "dev": "ELECTRON_RUN_AS_NODE= npm run build:ts && electron dist/main.js",
     "build": "tsc -p tsconfig.build.json && npm run copy:overlay && electron-forge make",
     "build:ts": "tsc -p tsconfig.build.json && npm run copy:overlay",
     "copy:overlay": "mkdir -p dist/overlay && cp -r src/overlay/*.html src/overlay/*.css src/overlay/*.js dist/overlay/",

@@ -11,3 +11,4 @@ export * from './sqlite.js';
 export * from './vectorize.js';
 export * from './vector-utils.js';
 export { MigrationRunner, type MigrationConfig, type Migration, type AppliedMigration } from './migrations/migration-runner.js';
+export * from './lifecycle/index.js';

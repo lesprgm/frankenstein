@@ -4,6 +4,7 @@ import Layout from '../components/layout/Layout'
 import { PageHeader } from '../components/PageHeader'
 import FileUpload from '../components/FileUpload'
 import ImportProgress from '../components/ImportProgress'
+import ProcessingLoader from '../components/ProcessingLoader'
 import { api, ImportJob } from '../lib/api'
 
 export default function Sources() {
@@ -108,17 +109,9 @@ export default function Sources() {
           }
         />
 
-        <div className="bg-white rounded-2xl border border-gray-200 p-8 relative shadow-sm">
+        <div className="bg-white rounded-2xl border border-gray-200 p-8 relative shadow-sm overflow-hidden">
           {isImporting && !importJob && (
-            <div className="absolute inset-0 bg-white bg-opacity-95 flex flex-col items-center justify-center z-10 rounded-lg">
-              <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mb-4"></div>
-              <p className="text-lg font-medium text-gray-900 mb-2">Processing your conversations...</p>
-              <p className="text-sm text-gray-600 text-center max-w-md">
-                This may take a few minutes depending on the size of your export.
-                <br />
-                We're extracting memories using AI.
-              </p>
-            </div>
+            <ProcessingLoader fileName={selectedFile?.name} />
           )}
 
           {!importJob && !isImporting && (

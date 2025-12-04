@@ -79,6 +79,7 @@ export interface RankingOptions {
   recencyWeight?: number;
   confidenceWeight?: number;
   similarityWeight?: number;
+  decayWeight?: number;
 }
 
 /**

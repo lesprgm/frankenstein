@@ -27,15 +27,17 @@ export class MemoryRanker {
     }
 
     const {
-      similarityWeight = 0.5,
-      recencyWeight = 0.3,
+      similarityWeight = 0.4,
+      recencyWeight = 0.2,
       confidenceWeight = 0.2,
+      decayWeight = 0.2,
     } = options;
-    
+
     // Validate weights are non-negative
     const validSimilarityWeight = Math.max(0, similarityWeight);
     const validRecencyWeight = Math.max(0, recencyWeight);
     const validConfidenceWeight = Math.max(0, confidenceWeight);
+    const validDecayWeight = Math.max(0, decayWeight);
 
     // Calculate rank scores for each result
     const rankedResults = results
@@ -44,14 +46,20 @@ export class MemoryRanker {
         try {
           const similarity = Number.isFinite(result.score) ? result.score : 0;
           const recencyScore = this.calculateRecencyScore(result.memory.created_at);
-          const confidence = Number.isFinite(result.memory.confidence) 
-            ? result.memory.confidence 
+          const confidence = Number.isFinite(result.memory.confidence)
+            ? result.memory.confidence
             : 0.5;
+
+          // Use decay_score if available, otherwise default to 1.0 (fresh)
+          const decayScore = Number.isFinite(result.memory.decay_score)
+            ? result.memory.decay_score
+            : 1.0;
 
           const rankScore =
             similarity * validSimilarityWeight +
             recencyScore * validRecencyWeight +
-            confidence * validConfidenceWeight;
+            confidence * validConfidenceWeight +
+            decayScore * validDecayWeight;
 
           return {
             ...result,
@@ -77,7 +85,7 @@ export class MemoryRanker {
     if (!results || !Array.isArray(results) || results.length === 0) {
       return [];
     }
-    
+
     return results
       .filter(result => result && result.memory)
       .map((result) => ({
@@ -94,7 +102,7 @@ export class MemoryRanker {
     if (!results || !Array.isArray(results) || results.length === 0) {
       return [];
     }
-    
+
     return results
       .filter(result => result && result.memory && result.memory.created_at)
       .map((result) => {
@@ -120,7 +128,7 @@ export class MemoryRanker {
     if (!results || !Array.isArray(results) || results.length === 0) {
       return [];
     }
-    
+
     return results
       .filter(result => result && result.memory)
       .map((result) => {
@@ -143,11 +151,11 @@ export class MemoryRanker {
     if (!results || !Array.isArray(results) || results.length === 0) {
       return [];
     }
-    
+
     if (typeof scoreFn !== 'function') {
       throw new Error('scoreFn must be a function');
     }
-    
+
     return results
       .filter(result => result && result.memory)
       .map((result) => {
@@ -175,22 +183,22 @@ export class MemoryRanker {
   private static calculateRecencyScore(createdAt: Date | string): number {
     try {
       const createdDate = typeof createdAt === 'string' ? new Date(createdAt) : createdAt;
-      
+
       // Validate date
       if (!createdDate || isNaN(createdDate.getTime())) {
         return 0.5; // Default recency score for invalid dates
       }
-      
+
       const now = new Date();
       const daysSinceCreation = (now.getTime() - createdDate.getTime()) / (1000 * 60 * 60 * 24);
-      
+
       // Handle negative days (future dates) or invalid calculations
       if (!Number.isFinite(daysSinceCreation) || daysSinceCreation < 0) {
         return 0.5;
       }
-      
+
       const score = 1 / (1 + daysSinceCreation);
-      
+
       // Ensure score is valid
       return Number.isFinite(score) ? score : 0.5;
     } catch (error) {

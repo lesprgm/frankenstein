@@ -4,13 +4,15 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { FileIndexRequest } from '../types.js';
 import { storageService } from './storage.js';
-import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { memoryLayerIntegration } from './memory-layer-integration.js';
 import type { NormalizedConversation, NormalizedMessage } from '@memorylayer/memory-extraction';
 
 const require = createRequire(import.meta.url);
-const pdfParse = require('pdf-parse');
+const mammothLib = require('mammoth');
+const mammoth = mammothLib.default || mammothLib;
+const pdfParseLib = require('pdf-parse');
+const pdfParse = pdfParseLib.default || pdfParseLib;
 
 type IngestedMemory = {
   id: string;
@@ -248,14 +250,61 @@ export class FileContentIngestor {
     // Convert file content to conversation format for MemoryLayer
     const conversation = this.convertToConversation(raw, file.path, file.name);
 
-    // Use MemoryLayer to extract memories with chunking
-    const extractedMemories = await this.extractWithMemoryLayer(
+    // Try MemoryLayer extraction first, fallback to simple chunking if it fails
+    let extractedMemories = await this.extractWithMemoryLayer(
       conversation,
       workspaceId,
       file
     );
 
+    // If LLM extraction failed (rate limits, etc.), use simple fallback
+    if (extractedMemories.length === 0) {
+      console.info('[Ghost][Ingest] Using fallback extraction (no LLM)', { file: file.name });
+      extractedMemories = this.extractWithFallback(raw, file, workspaceId);
+    }
+
     return extractedMemories;
+  }
+
+  /**
+   * Fallback extraction that stores raw file content chunks without LLM.
+   * Used when MemoryLayer extraction fails (e.g., rate limits).
+   */
+  private extractWithFallback(
+    content: string,
+    file: { path: string; name: string },
+    workspaceId: string
+  ): IngestedMemory[] {
+    const fileHash = this.hashPath(path.resolve(file.path));
+    const sections = this.splitIntoSections(content);
+    
+    // Limit to reasonable number of chunks per file
+    const maxChunks = 10;
+    const chunks = sections.slice(0, maxChunks);
+    
+    console.info('[Ghost][Ingest] Fallback extraction creating chunks', {
+      file: file.name,
+      totalSections: sections.length,
+      chunksStored: chunks.length,
+    });
+
+    return chunks.map((chunk, index) => ({
+      id: `chunk-${fileHash}-${index}`,
+      type: 'doc.chunk',
+      summary: `${file.name}: ${chunk.slice(0, 500)}`,
+      score: 0.8,  // Good confidence for raw content
+      metadata: {
+        path: file.path,
+        name: file.name,
+        kind: 'file.fallback',
+        source_file_id: `file-${fileHash}`,
+        chunk_index: index,
+        total_chunks: chunks.length,
+      },
+      workspace_id: workspaceId,
+      createdAt: new Date().toISOString(),
+      source: 'file' as const,
+    }));
   }
 
   /**

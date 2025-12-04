@@ -208,8 +208,16 @@ export class ExplainabilityService {
 
         // Extract from content
         const words = memory.content.split(/\s+/);
+        const stopwords = new Set(['The', 'A', 'An', 'This', 'That', 'These', 'Those', 'Is', 'Are', 'Was', 'Were', 'To', 'Of', 'In', 'On', 'At', 'For', 'With', 'By', 'From']);
+
         const capitalized = words.filter(
-            (word) => word.length > 2 && /^[A-Z]/.test(word) && !/^[A-Z]+$/.test(word)
+            (word) =>
+                word.length > 3 && // Increased from 2 to 3
+                /^[A-Z]/.test(word) &&
+                !/^[A-Z]+$/.test(word) && // Skip all-caps (often acronyms or noise)
+                !stopwords.has(word) && // Skip stopwords
+                !word.endsWith('.') && // Skip end of sentence words often capitalized by mistake
+                !word.endsWith(',')
         );
 
         entities.push(...capitalized.slice(0, 3)); // Limit to 3 entities per memory

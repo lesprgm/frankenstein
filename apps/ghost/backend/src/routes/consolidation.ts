@@ -1,10 +1,55 @@
 import { Hono } from 'hono';
+import crypto from 'node:crypto';
 import type { Result } from '../types.js';
 import { MemoryConsolidationService } from '../services/memory-consolidation.js';
 import { memoryLayerIntegration } from '../services/memory-layer-integration.js';
 import { storageService } from '../services/storage.js';
 
 const app = new Hono();
+
+/**
+ * POST /api/memories/create
+ * Create a memory (for demo mode reminder storage)
+ */
+app.post('/create', async (c) => {
+    try {
+        const body = await c.req.json();
+        const { user_id, type, summary, metadata, timestamp } = body;
+
+        if (!user_id || !type || !summary) {
+            return c.json({ error: 'user_id, type, and summary are required' }, 400);
+        }
+
+        // Store the memory directly in storage
+        const db = (storageService as any).db;
+        const id = crypto.randomUUID();
+
+        const result = await db.run(
+            `INSERT INTO memories (id, workspace_id, type, content, embedding, metadata, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                id,
+                user_id,
+                type,
+                summary,
+                null, // No embedding for reminders yet
+                JSON.stringify(metadata || {}),
+                timestamp || new Date().toISOString(),
+                new Date().toISOString()
+            ]
+        );
+
+        if (!result.ok) {
+            return c.json({ error: 'Failed to create memory' }, 500);
+        }
+
+        console.log('[Ghost][Memories] Created reminder memory:', id);
+        return c.json({ id });
+    } catch (error) {
+        console.error('[Ghost][Memories] Create error:', error);
+        return c.json({ error: error instanceof Error ? error.message : 'Unknown error' }, 500);
+    }
+});
 
 /**
  * POST /api/memories/consolidate

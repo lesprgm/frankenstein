@@ -7,7 +7,7 @@ import { SqliteAdapter, SqliteConfig } from './sqlite.js';
 import { StorageAdapter, Transaction } from './adapter.js';
 import { VectorizeAdapter, VectorizeConfig } from './vectorize.js';
 import { Result, StorageError } from './errors.js';
-import { User, Workspace, Conversation, ConversationFilters, Message, Memory, MemoryType, MemoryFilters, SearchQuery, SearchResult, Relationship } from './models.js';
+import { User, Workspace, Conversation, ConversationFilters, Message, Memory, MemoryType, MemoryFilters, SearchQuery, SearchResult, Relationship, LifecycleState } from './models.js';
 
 /**
  * Logger interface for internal error tracking
@@ -790,7 +790,8 @@ export class StorageClient {
     }
 
     try {
-      // Insert memory into Postgres
+      // Insert memory into database with lifecycle fields initialized
+      const now = new Date();
       const memoryData = {
         workspace_id: data.workspace_id.trim(),
         conversation_id: data.conversation_id || null,
@@ -798,6 +799,18 @@ export class StorageClient {
         content: data.content.trim(),
         confidence: data.confidence,
         metadata: data.metadata || {},
+        // Initialize lifecycle management fields
+        lifecycle_state: 'active' as LifecycleState,
+        last_accessed_at: now,
+        access_count: 0,
+        importance_score: 0.5, // Default medium importance
+        decay_score: 1.0, // Start with maximum freshness
+        effective_ttl: null,
+        pinned: false,
+        pinned_by: null,
+        pinned_at: null,
+        archived_at: null,
+        expires_at: null,
       };
 
       const result = await this.adapter.insert<Memory>('memories', memoryData);
@@ -906,7 +919,25 @@ export class StorageClient {
         return { ok: true, value: null };
       }
 
-      return { ok: true, value: result.value[0] };
+      const memory = result.value[0];
+
+      // Track access (non-blocking, fire-and-forget)
+      // Don't await to avoid slowing down reads
+      this.adapter.query(
+        `UPDATE memories 
+         SET access_count = access_count + 1, 
+             last_accessed_at = $1 
+         WHERE id = $2`,
+        [new Date().toISOString(), id]
+      ).catch((error) => {
+        // Log error but don't fail the read operation
+        this.logger.warn('Failed to update access tracking', {
+          memory_id: id,
+          error,
+        });
+      });
+
+      return { ok: true, value: memory };
     } catch (error) {
       this.logger.error('Unexpected error getting memory', { id, workspaceId, error });
       return {
@@ -1005,6 +1036,259 @@ export class StorageClient {
         error: {
           type: 'database',
           message: 'Failed to list memories',
+          cause: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Get memories by lifecycle state
+   */
+  async getMemoriesByLifecycleState(
+    workspaceId: string,
+    state: LifecycleState,
+    options?: { limit?: number; offset?: number }
+  ): Promise<Result<Memory[], StorageError>> {
+    if (!workspaceId || !workspaceId.trim()) {
+      return {
+        ok: false,
+        error: {
+          type: 'validation',
+          field: 'workspaceId',
+          message: 'Workspace ID is required',
+        },
+      };
+    }
+
+    // Validate lifecycle state
+    const validStates: LifecycleState[] = ['active', 'decaying', 'archived', 'expired', 'pinned'];
+    if (!validStates.includes(state)) {
+      return {
+        ok: false,
+        error: {
+          type: 'validation',
+          field: 'state',
+          message: `Invalid lifecycle state. Must be one of: ${validStates.join(', ')}`,
+        },
+      };
+    }
+
+    const limit = options?.limit ?? 50;
+    const offset = options?.offset ?? 0;
+
+    // Validate limit and offset
+    if (limit < 1 || limit > 1000) {
+      return {
+        ok: false,
+        error: {
+          type: 'validation',
+          field: 'limit',
+          message: 'Limit must be between 1 and 1000',
+        },
+      };
+    }
+
+    if (offset < 0) {
+      return {
+        ok: false,
+        error: {
+          type: 'validation',
+          field: 'offset',
+          message: 'Offset must be non-negative',
+        },
+      };
+    }
+
+    try {
+      const result = await this.adapter.query<Memory>(
+        `SELECT * FROM memories 
+         WHERE workspace_id = $1 AND lifecycle_state = $2 
+         ORDER BY created_at DESC 
+         LIMIT $3 OFFSET $4`,
+        [workspaceId, state, limit, offset]
+      );
+
+      if (!result.ok) {
+        this.logger.error('Failed to get memories by lifecycle state', {
+          workspaceId,
+          state,
+          error: result.error,
+        });
+        return result;
+      }
+
+      return { ok: true, value: result.value };
+    } catch (error) {
+      this.logger.error('Unexpected error getting memories by lifecycle state', {
+        workspaceId,
+        state,
+        error,
+      });
+      return {
+        ok: false,
+        error: {
+          type: 'database',
+          message: 'Failed to get memories by lifecycle state',
+          cause: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Update memory lifecycle fields
+   */
+  async updateMemoryLifecycle(
+    id: string,
+    workspaceId: string,
+    updates: {
+      lifecycle_state?: LifecycleState;
+      importance_score?: number;
+      decay_score?: number;
+      pinned?: boolean;
+    }
+  ): Promise<Result<Memory, StorageError>> {
+    if (!id || !id.trim()) {
+      return {
+        ok: false,
+        error: {
+          type: 'validation',
+          field: 'id',
+          message: 'Memory ID is required',
+        },
+      };
+    }
+
+    if (!workspaceId || !workspaceId.trim()) {
+      return {
+        ok: false,
+        error: {
+          type: 'validation',
+          field: 'workspaceId',
+          message: 'Workspace ID is required',
+        },
+      };
+    }
+
+    // Validate input
+    if (updates.importance_score !== undefined && (updates.importance_score < 0 || updates.importance_score > 1)) {
+      return {
+        ok: false,
+        error: {
+          type: 'validation',
+          field: 'importance_score',
+          message: 'Importance score must be between 0 and 1',
+        },
+      };
+    }
+
+    if (updates.decay_score !== undefined && (updates.decay_score < 0 || updates.decay_score > 1)) {
+      return {
+        ok: false,
+        error: {
+          type: 'validation',
+          field: 'decay_score',
+          message: 'Decay score must be between 0 and 1',
+        },
+      };
+    }
+
+    try {
+      // Build update query dynamically based on provided fields
+      const updateFields: string[] = [];
+      const params: any[] = [];
+      let paramIndex = 1;
+
+      if (updates.lifecycle_state !== undefined) {
+        updateFields.push(`lifecycle_state = $${paramIndex++}`);
+        params.push(updates.lifecycle_state);
+      }
+
+      if (updates.importance_score !== undefined) {
+        updateFields.push(`importance_score = $${paramIndex++}`);
+        params.push(updates.importance_score);
+      }
+
+      if (updates.decay_score !== undefined) {
+        updateFields.push(`decay_score = $${paramIndex++}`);
+        params.push(updates.decay_score);
+      }
+
+      if (updates.pinned !== undefined) {
+        updateFields.push(`pinned = $${paramIndex++}`);
+        params.push(updates.pinned);
+
+        if (updates.pinned) {
+          updateFields.push(`pinned_at = $${paramIndex++}`);
+          params.push(new Date().toISOString());
+        } else {
+          updateFields.push(`pinned_at = NULL, pinned_by = NULL`);
+        }
+      }
+
+      if (updateFields.length === 0) {
+        return {
+          ok: false,
+          error: {
+            type: 'validation',
+            field: 'updates',
+            message: 'At least one field must be provided for update',
+          },
+        };
+      }
+
+      // Always update updated_at
+      updateFields.push(`updated_at = $${paramIndex++}`);
+      params.push(new Date().toISOString());
+
+      // Add ID and workspace_id
+      params.push(id);
+      params.push(workspaceId);
+
+      const query = `
+        UPDATE memories 
+        SET ${updateFields.join(', ')} 
+        WHERE id = $${paramIndex++} AND workspace_id = $${paramIndex++}
+        RETURNING *
+      `;
+
+      const result = await this.adapter.query<Memory>(query, params);
+
+      if (!result.ok) {
+        this.logger.error('Failed to update memory lifecycle', {
+          id,
+          workspace_id: workspaceId,
+          updates,
+          error: result.error,
+        });
+        return result;
+      }
+
+      if (result.value.length === 0) {
+        return {
+          ok: false,
+          error: {
+            type: 'not_found',
+            resource: 'memory',
+            id,
+          },
+        };
+      }
+
+      return { ok: true, value: result.value[0] };
+    } catch (error) {
+      this.logger.error('Unexpected error updating memory lifecycle', {
+        id,
+        workspaceId,
+        updates,
+        error,
+      });
+      return {
+        ok: false,
+        error: {
+          type: 'database',
+          message: 'Failed to update memory lifecycle',
           cause: error,
         },
       };
@@ -1215,14 +1499,38 @@ export class StorageClient {
       this.logger.info('Found vector matches, fetching memory records', {
         workspace_id: workspaceId,
         match_count: memoryIds.length,
+        include_archived: query.includeArchived,
       });
 
-      // Fetch full memory records from Postgres for matching IDs
+      // Fetch full memory records from database for matching IDs
       // Use IN to match multiple IDs and ensure workspace scoping
-      // We need to construct the query dynamically for IN clause
+      // If includeArchived is true, use UNION to search both tables
       const placeholders = memoryIds.map((_, i) => `$${i + 1}`).join(', ');
-      const sqlQuery = `SELECT * FROM memories WHERE id IN (${placeholders}) AND workspace_id = $${memoryIds.length + 1}`;
-      const params = [...memoryIds, workspaceId];
+
+      let sqlQuery: string;
+      let params: any[];
+
+      if (query.includeArchived) {
+        // UNION query to search both active and archived memories
+        sqlQuery = `
+          SELECT *, 'active' as source FROM memories 
+          WHERE id IN (${placeholders}) AND workspace_id = $${memoryIds.length + 1}
+          UNION ALL
+          SELECT 
+            id, workspace_id, conversation_id, type, content, confidence, 
+            metadata, created_at, updated_at, last_accessed_at, access_count, 
+            importance_score, NULL as decay_score, NULL as effective_ttl, 
+            NULL as lifecycle_state, false as pinned, NULL as pinned_by, 
+            NULL as pinned_at, archived_at, expires_at, 'archived' as source
+          FROM archived_memories 
+          WHERE id IN (${placeholders}) AND workspace_id = $${memoryIds.length + 1}
+        `;
+        params = [...memoryIds, workspaceId, ...memoryIds, workspaceId];
+      } else {
+        // Standard query for active memories only
+        sqlQuery = `SELECT * FROM memories WHERE id IN (${placeholders}) AND workspace_id = $${memoryIds.length + 1}`;
+        params = [...memoryIds, workspaceId];
+      }
 
       const memoriesResult = await this.adapter.query<Memory>(
         sqlQuery,

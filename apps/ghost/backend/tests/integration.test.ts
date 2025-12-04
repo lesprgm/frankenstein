@@ -72,7 +72,9 @@ describe('Ghost Backend Integration', () => {
         if (contextResult.memories.length === 0) {
             const recent = storageService.getRecentFiles(userId, 1);
             expect(recent.ok).toBe(true);
-            expect(recent.value?.[0]?.metadata?.path).toBe('/tmp/project_alpha_specs.pdf');
+            if (recent.ok) {
+                expect(recent.value[0]?.metadata?.path).toBe('/tmp/project_alpha_specs.pdf');
+            }
         } else {
             const usedFile = contextResult.memories.find((m: any) => m.memory.metadata?.path === '/tmp/project_alpha_specs.pdf');
             expect(usedFile).toBeDefined();

@@ -51,6 +51,24 @@ function runMigrations(db: Database.Database): void {
                 console.log('MemoryLayer tables created via schema.sql');
             },
         },
+        {
+            name: '003_explainability_tables',
+            run: () => {
+                db.exec(`
+                    CREATE TABLE IF NOT EXISTS explanation_contexts (
+                        command_id TEXT PRIMARY KEY,
+                        command_text TEXT NOT NULL,
+                        user_query TEXT NOT NULL,
+                        reasoning_data TEXT NOT NULL, -- JSON
+                        graph_data TEXT NOT NULL, -- JSON
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        FOREIGN KEY (command_id) REFERENCES commands(id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_explanation_contexts_created_at ON explanation_contexts(created_at DESC);
+                `);
+                console.log('Explainability tables created');
+            },
+        },
     ];
 
     // Apply pending migrations

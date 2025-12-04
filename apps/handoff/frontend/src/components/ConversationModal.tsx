@@ -25,6 +25,8 @@ export default function ConversationModal({ conversationIds, isOpen, onClose }: 
     const [loadingProgress, setLoadingProgress] = useState<string>('')
     const [isExporting, setIsExporting] = useState(false)
     const [searchQuery, setSearchQuery] = useState('')
+    const [shareLabel, setShareLabel] = useState('Share')
+    const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
     const messageRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
     useEffect(() => {
@@ -237,15 +239,27 @@ export default function ConversationModal({ conversationIds, isOpen, onClose }: 
                                         </div>
                                         <div className="flex items-center gap-3">
                                             <button
-                                                onClick={() => {
-                                                    const url = new URL(window.location.href)
-                                                    url.searchParams.set('id', conversationIds[0])
-                                                    navigator.clipboard.writeText(url.toString())
-                                                    // Could add toast here but simple alert for now or just rely on action
-                                                    const btn = document.activeElement as HTMLButtonElement
-                                                    const originalText = btn.innerText
-                                                    btn.innerText = 'Copied!'
-                                                    setTimeout(() => btn.innerText = originalText, 2000)
+                                                onClick={async () => {
+                                                    if (!conversationIds[0]) return
+                                                    const shareUrl = `${window.location.origin}/chats?id=${conversationIds[0]}`
+                                                    try {
+                                                        if (navigator.share) {
+                                                            await navigator.share({
+                                                                title: conversation?.title || 'Conversation',
+                                                                url: shareUrl,
+                                                            })
+                                                            setShareLabel('Shared!')
+                                                        } else if (navigator.clipboard?.writeText) {
+                                                            await navigator.clipboard.writeText(shareUrl)
+                                                            setShareLabel('Copied!')
+                                                        } else {
+                                                            throw new Error('Sharing not supported')
+                                                        }
+                                                    } catch {
+                                                        setShareLabel('Copy failed')
+                                                    } finally {
+                                                        setTimeout(() => setShareLabel('Share'), 2000)
+                                                    }
                                                 }}
                                                 className="btn-ios-secondary text-sm flex items-center gap-2"
                                                 disabled={!conversation}
@@ -253,7 +267,7 @@ export default function ConversationModal({ conversationIds, isOpen, onClose }: 
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                                                 </svg>
-                                                Share
+                                                {shareLabel}
                                             </button>
                                             <button
                                                 onClick={handleExport}
@@ -306,48 +320,77 @@ export default function ConversationModal({ conversationIds, isOpen, onClose }: 
                                                             No messages match your search
                                                         </p>
                                                     ) : (
-                                                        filteredMessages.map((msg, idx) => (
-                                                            <div
-                                                                key={msg.id || idx}
-                                                                ref={el => messageRefs.current[msg.id] = el}
-                                                                className={`flex gap-4 ${msg.role === 'assistant' ? 'bg-transparent' : 'flex-row-reverse'} transition-colors duration-500 rounded-lg p-2`}
-                                                            >
-                                                                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${msg.role === 'assistant'
-                                                                    ? 'bg-[var(--color-accent-indigo)] text-white'
-                                                                    : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]'
-                                                                    }`}>
-                                                                    {msg.role === 'assistant' ? 'AI' : 'U'}
-                                                                </div>
-                                                                <div className={`flex flex-col max-w-[85%] space-y-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                                                                    <div className={`rounded-2xl px-5 py-3 text-sm leading-relaxed ${msg.role === 'user'
-                                                                        ? 'bg-[var(--color-accent-blue)] text-white'
-                                                                        : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)]'
+                                                        filteredMessages.map((msg, idx) => {
+                                                            const messageKey = msg.id || `msg-${idx}`
+                                                            const isAssistant = msg.role === 'assistant'
+
+                                                            return (
+                                                                <div
+                                                                    key={messageKey}
+                                                                    ref={el => messageRefs.current[msg.id] = el}
+                                                                    className={`flex gap-4 ${isAssistant ? 'bg-transparent' : 'flex-row-reverse'} transition-colors duration-500 rounded-lg p-2`}
+                                                                >
+                                                                    <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${isAssistant
+                                                                        ? 'bg-[var(--color-accent-indigo)] text-white'
+                                                                        : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]'
                                                                         }`}>
-                                                                        <ReactMarkdown
-                                                                            remarkPlugins={[remarkGfm]}
-                                                                            components={{
-                                                                                // Style markdown elements to match our design
-                                                                                p: ({ node, ...props }) => <p className="mb-2 last:mb-0" {...props} />,
-                                                                                strong: ({ node, ...props }) => <strong className="font-semibold" {...props} />,
-                                                                                em: ({ node, ...props }) => <em className="italic" {...props} />,
-                                                                                code: ({ node, ...props }) => <code className="bg-black/10 px-1 py-0.5 rounded text-xs" {...props} />,
-                                                                                ul: ({ node, ...props }) => <ul className="list-disc list-inside mb-2" {...props} />,
-                                                                                ol: ({ node, ...props }) => <ol className="list-decimal list-inside mb-2" {...props} />,
-                                                                                li: ({ node, ...props }) => <li className="ml-2" {...props} />,
-                                                                                h1: ({ node, ...props }) => <h1 className="text-lg font-bold mb-2" {...props} />,
-                                                                                h2: ({ node, ...props }) => <h2 className="text-base font-bold mb-2" {...props} />,
-                                                                                h3: ({ node, ...props }) => <h3 className="text-sm font-bold mb-1" {...props} />,
-                                                                            }}
-                                                                        >
-                                                                            {msg.content}
-                                                                        </ReactMarkdown>
+                                                                        {isAssistant ? 'AI' : 'U'}
                                                                     </div>
-                                                                    <span className="text-xs text-[var(--color-text-tertiary)] px-2">
-                                                                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                                    </span>
+                                                                    <div className={`flex flex-col max-w-[85%] space-y-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                                                                        <div className={`rounded-2xl px-5 py-3 text-sm leading-relaxed ${msg.role === 'user'
+                                                                            ? 'bg-[var(--color-accent-blue)] text-white'
+                                                                            : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)]'
+                                                                            }`}>
+                                                                            <ReactMarkdown
+                                                                                remarkPlugins={[remarkGfm]}
+                                                                                components={{
+                                                                                    // Style markdown elements to match our design
+                                                                                    p: ({ node, ...props }) => <p className="mb-2 last:mb-0" {...props} />,
+                                                                                    strong: ({ node, ...props }) => <strong className="font-semibold" {...props} />,
+                                                                                    em: ({ node, ...props }) => <em className="italic" {...props} />,
+                                                                                    code: ({ node, ...props }) => <code className="bg-black/10 px-1 py-0.5 rounded text-xs" {...props} />,
+                                                                                    ul: ({ node, ...props }) => <ul className="list-disc list-inside mb-2" {...props} />,
+                                                                                    ol: ({ node, ...props }) => <ol className="list-decimal list-inside mb-2" {...props} />,
+                                                                                    li: ({ node, ...props }) => <li className="ml-2" {...props} />,
+                                                                                    h1: ({ node, ...props }) => <h1 className="text-lg font-bold mb-2" {...props} />,
+                                                                                    h2: ({ node, ...props }) => <h2 className="text-base font-bold mb-2" {...props} />,
+                                                                                    h3: ({ node, ...props }) => <h3 className="text-sm font-bold mb-1" {...props} />,
+                                                                                }}
+                                                                            >
+                                                                                {msg.content}
+                                                                            </ReactMarkdown>
+                                                                        </div>
+                                                                        {isAssistant && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={async () => {
+                                                                                    try {
+                                                                                        if (navigator.clipboard?.writeText) {
+                                                                                            await navigator.clipboard.writeText(msg.content)
+                                                                                        }
+                                                                                        setCopiedMessageId(messageKey)
+                                                                                    } catch (e) {
+                                                                                        console.error('Copy failed', e)
+                                                                                    } finally {
+                                                                                        setTimeout(() => setCopiedMessageId(null), 1500)
+                                                                                    }
+                                                                                }}
+                                                                                className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 px-2"
+                                                                            >
+                                                                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                                                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                                                                </svg>
+                                                                                {copiedMessageId === messageKey ? 'Copied' : 'Copy'}
+                                                                            </button>
+                                                                        )}
+                                                                        <span className="text-xs text-[var(--color-text-tertiary)] px-2">
+                                                                            {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                                        </span>
+                                                                    </div>
                                                                 </div>
-                                                            </div>
-                                                        ))
+                                                            )
+                                                        })
                                                     )}
                                                 </div>
                                             </div>

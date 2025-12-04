@@ -169,6 +169,12 @@ export class ContextEngine {
       defaultTemplate: this.defaultTemplate,
       defaultTokenBudget: this.defaultTokenBudget,
     });
+
+    // Validate default ranking weights if provided in config (assuming config might have them in future)
+    // For now, we just ensure the ranker registry is healthy
+    if (this.rankers.size === 0) {
+      this.logger.warn('No rankers registered');
+    }
   }
 
   /**
@@ -715,9 +721,10 @@ export class ContextEngine {
         if (typeof options.ranker === 'function') {
           // Custom ranking function provided directly
           const rankingOptions: RankingOptions = {
-            recencyWeight: 0.3,
+            recencyWeight: 0.2,
             confidenceWeight: 0.2,
-            similarityWeight: 0.5,
+            similarityWeight: 0.4,
+            decayWeight: 0.2,
           };
           rankedResults = options.ranker(searchResults, rankingOptions);
         } else if (typeof options.ranker === 'string') {
@@ -733,18 +740,20 @@ export class ContextEngine {
             };
           }
           const rankingOptions: RankingOptions = {
-            recencyWeight: 0.3,
+            recencyWeight: 0.2,
             confidenceWeight: 0.2,
-            similarityWeight: 0.5,
+            similarityWeight: 0.4,
+            decayWeight: 0.2,
           };
           rankedResults = rankerFn(searchResults, rankingOptions);
         }
       } else {
         // Use default ranking
         const rankingOptions: RankingOptions = {
-          recencyWeight: 0.3,
+          recencyWeight: 0.2,
           confidenceWeight: 0.2,
-          similarityWeight: 0.5,
+          similarityWeight: 0.4,
+          decayWeight: 0.2,
         };
         rankedResults = MemoryRanker.defaultRanking(searchResults, rankingOptions);
       }

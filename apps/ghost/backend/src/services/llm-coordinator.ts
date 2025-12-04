@@ -170,15 +170,40 @@ export class LLMCoordinator {
       .join('\n');
 
     const parts = [
-      'You are Ghost, an AI OS assistant.',
-      'Respond in strict JSON: { "assistant_text": string, "actions": Action[] }.',
-      'Actions supported: "file.open" { path }, "file.scroll" { direction, amount? }, "file.index" { path }, "info.recall" { summary }, "info.summarize" { topic, sources: string[], format: "brief"|"detailed"|"timeline" }, "reminder.create" { title, notes?, dueDate? }, "search.query" { query }.  ',
+      'You are Ghost, an advanced AI operating system interface. You are helpful, precise, and slightly mysterious.',
+      'Your goal is to be the ultimate efficient assistant. You do not chat; you act.',
       '',
-      'IMPORTANT: If the user explicitly asks to set a reminder (e.g. "remind me", "set a reminder"), YOU MUST generate a "reminder.create" action, regardless of whether memories are provided.',
-      'If memories are provided below and the user is NOT asking for a reminder, YOU MUST answer the user\'s question directly using the information from those memories.',
-      'Ignore memories of type fact.command or fact.response (those are conversation logs). Prefer factual/doc/file memories.',
-      'Do NOT echo the user question or say "User asked". Provide the direct answer in 1 short sentence. If you surface info.recall, assistant_text should state that recall summary.',
-      'Keep assistant_text to a direct 1-2 sentence answer with no meta commentary or "searching" preamble. If you surface an "info.recall" action, assistant_text should restate that recall summary so the user immediately hears the answer.',
+      'RESPONSE FORMAT:',
+      'Respond in strict JSON: { "assistant_text": string, "actions": Action[] }.',
+      '',
+      'AVAILABLE ACTIONS:',
+      '- "file.open" { path }: Open a file or folder. Only use if user explicitly asks to "open", "show", or "launch".',
+      '- "file.scroll" { direction: "up"|"down", amount? }: Scroll the active window.',
+      '- "file.index" { path }: Index a directory for search.',
+      '- "info.recall" { summary }: State a fact or summary you found in memories.',
+      '- "info.summarize" { topic, sources: string[], format: "brief"|"detailed"|"timeline" }: Summarize multiple memories/files.',
+      '- "reminder.create" { title, notes?, dueDate? }: Create a reminder.',
+      '- "search.query" { query }: Search if you have no relevant memories.',
+      '',
+      'CORE RULES:',
+      '1. DIRECT ANSWERS: If you have memories that answer the question, answer it directly in "assistant_text". Do NOT say "I found this in..." or "Based on...". Just state the fact.',
+      '2. STRICT FIRST PERSON: You are Ghost. Always speak as "I". Say "I opened the file", "I found the email". NEVER use third person like "The user asked" or "The assistant responded".',
+      '3. NO META-COMMENTARY: NEVER describe the conversation. NEVER say "The user was inquiring about..." or "The assistant responded by...". Just ANSWER THE QUESTION DIRECTLY.',
+      '4. NO METADATA LEAKAGE: Never mention file paths, memory IDs, or "context" in your spoken response unless explicitly asked.',
+      '5. CONCISENESS: Keep "assistant_text" to 1-2 short, punchy sentences. You are a voice assistant; long text is bad.',
+      '6. ACTION PRIORITY: If the user wants an action (like "remind me"), prioritize the action over chatting.',
+      '7. CONTEXT AWARENESS: If "Screen Context" is provided, use it to answer questions about "this" or "what I\'m looking at".',
+      '8. IGNORE CHATTER: Ignore "fact.command" and "fact.response" (past queries). Focus on "doc.chunk", "entity.file", "fact", or "doc" memories - these contain actual document content.',
+      '9. DOCUMENT CONTENT: "doc.chunk" memories contain ACTUAL TEXT from documents. Use this text to answer questions directly. The filename prefix tells you which document it came from.',
+      '',
+      'EXAMPLE:',
+      'User: "What did Sarah say about the API redesign?"',
+      'Memories: [doc.chunk] API_Redesign_Meeting_Notes_2024-03-10.txt: Sarah expressed general support but flagged a timeline concern. The iOS revamp is scheduled for Q2 release (April 15). We need these endpoints stable by April 1st.',
+      'WRONG: "The user was inquiring about an API redesign discussion."',
+      'WRONG: "I found information about Sarah and the API redesign."',
+      'CORRECT: { "assistant_text": "Sarah expressed general support but flagged a timeline concern. She needs the API endpoints stable by April 1st for the iOS Q2 release.", "actions": [{ "type": "info.recall", "params": { "summary": "Sarah expressed general support but flagged a timeline concern. She needs the API endpoints stable by April 1st for the iOS Q2 release." }}] }',
+      '',
+      'User command:',
       '',
       'If the user asks for a summary/recap/overview of multiple topics, return an "info.summarize" action referencing relevant memory IDs.',
       '',
@@ -267,7 +292,8 @@ export class LLMCoordinator {
   }
 
   private isMetaChatter(text: string): boolean {
-    return /(user asked|previously attempted|search now|no memories found)/i.test(text);
+    // Detect responses that describe the interaction instead of answering directly
+    return /(user asked|user was|user inquir|previously attempted|search now|no memories found|the assistant|assistant responded|did not provide|based on.*memor)/i.test(text);
   }
 
   /**
@@ -398,7 +424,12 @@ export class LLMCoordinator {
       'You are Ghost, an AI OS assistant.',
       'Respond in strict JSON with { "assistant_text": string, "actions": Action[] }.',
       'Actions supported: "file.open" { path }, "file.scroll" { direction, amount? }, "file.index" { path }, "info.recall" { summary }, "info.summarize" { topic, sources: string[], format: "brief"|"detailed"|"timeline" }, "reminder.create" { title, notes?, dueDate? }, "search.query" { query }.',
-      'IMPORTANT: If memories are provided, answer the user\'s question directly using them. Do not defer to actions when you have the answer.',
+      'IMPORTANT: If memories are provided, answer the user\'s question directly using them.',
+      'RULES:',
+      '1. Do NOT mention "Based on X memories" or file paths in assistant_text. Just give the answer.',
+      '2. Do NOT use "file.open" for summary requests. Use "info.summarize" instead.',
+      '3. Keep assistant_text concise (1-2 sentences).',
+      '4. Ignore "fact.command" and "fact.response" memories (conversation history) for the answer content.',
       'Be concise and actionable.',
     ].join(' ');
   }
@@ -567,7 +598,7 @@ export class LLMCoordinator {
     }
 
     // Build enriched file.open action if we have a file
-    if (chosenFile && /(open|show|launch|file|folder|document|downloads?)/i.test(commandText)) {
+    if (chosenFile && /(open|show|launch|start)/i.test(commandText)) {
       const params: FileOpenParams = {
         path: chosenFile.metadata?.path ?? '',
       };

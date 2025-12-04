@@ -24,8 +24,8 @@ export interface CommandResponse {
 }
 
 export interface Action {
-  type: 'file.open' | 'file.scroll' | 'file.index' | 'info.recall' | 'info.summarize';
-  params: FileOpenParams | FileScrollParams | FileIndexParams | InfoRecallParams | InfoSummarizeParams;
+  type: 'file.open' | 'file.scroll' | 'file.index' | 'info.recall' | 'info.summarize' | 'reminder.create';
+  params: FileOpenParams | FileScrollParams | FileIndexParams | InfoRecallParams | InfoSummarizeParams | ReminderCreateParams;
 }
 
 export interface FileIndexParams {
@@ -53,6 +53,12 @@ export interface InfoSummarizeParams {
   topic: string;
   sources: string[]; // memory IDs or file paths
   format: 'brief' | 'detailed' | 'timeline';
+}
+
+export interface ReminderCreateParams {
+  title: string;
+  notes?: string;
+  dueDate?: string;
 }
 
 export interface MemoryReference {

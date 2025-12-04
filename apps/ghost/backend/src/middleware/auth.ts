@@ -21,11 +21,17 @@ export const requireApiKey: MiddlewareHandler = async (c, next) => {
   }
 
   const header = c.req.header('authorization') || c.req.header('Authorization');
-  if (!header || !header.startsWith('Bearer ')) {
+  const queryToken = c.req.query('apiKey') || c.req.query('token');
+
+  // Prefer header but allow query param for EventSource/SSE which cannot send headers easily
+  const token = header && header.startsWith('Bearer ')
+    ? header.replace(/^Bearer\s+/i, '').trim()
+    : queryToken;
+
+  if (!token) {
     return c.json({ error: 'Missing Authorization header' }, 401);
   }
 
-  const token = header.replace(/^Bearer\s+/i, '').trim();
   if (token !== apiKey) {
     return c.json({ error: 'Invalid API key' }, 401);
   }
