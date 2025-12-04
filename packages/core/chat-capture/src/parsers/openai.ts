@@ -66,6 +66,14 @@ export class OpenAIParser extends BaseParser {
    * Requirements: 4.2
    */
   canParse(data: unknown): boolean {
+    // Newer HTML exports often embed an array of conversations directly
+    if (Array.isArray(data)) {
+      const first = data[0];
+      if (first && typeof first === 'object' && (this.hasProperty(first, 'mapping') || this.hasProperty(first, 'conversation_id'))) {
+        return true;
+      }
+    }
+
     if (!this.hasProperty(data, 'mapping') && !this.hasProperty(data, 'conversations')) {
       return false;
     }
@@ -111,6 +119,16 @@ export class OpenAIParser extends BaseParser {
                 error instanceof Error ? error.message : String(error)
               }`
             );
+          }
+        }
+      }
+      // Handle array of conversations (e.g., HTML exports with embedded JSON)
+      else if (Array.isArray(exportData)) {
+        for (let i = 0; i < exportData.length; i++) {
+          const conv = exportData[i] as OpenAIConversation;
+          const normalized = this.parseConversation(conv);
+          if (normalized) {
+            conversations.push(normalized);
           }
         }
       }

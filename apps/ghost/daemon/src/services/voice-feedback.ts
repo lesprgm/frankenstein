@@ -59,6 +59,31 @@ export class VoiceFeedbackService {
     }
 
     /**
+     * Get instant acknowledgment for an action (micro-feedback to reduce perceived latency)
+     */
+    getAcknowledgment(action: Action): string | null {
+        switch (action.type) {
+            case 'file.open':
+                return 'Opening...';
+            case 'file.scroll':
+                return 'Scrolling...';
+            case 'info.recall':
+                return 'Recalling...';
+            case 'info.summarize':
+                return 'Analyzing...';
+            case 'reminder.create':
+                return 'Noted.';
+            case 'search.query':
+                return 'Searching...';
+            case 'file.index':
+                return 'Indexing...';
+            default:
+                return 'On it.';
+        }
+    }
+
+
+    /**
      * Generate feedback text for an action result
      */
     private generateFeedback(action: Action, result: ActionResult): string | null {

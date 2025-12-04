@@ -8,7 +8,8 @@ vi.mock('../src/services/vision', () => {
         VisionService: vi.fn().mockImplementation(() => ({
             captureScreenContext: vi.fn().mockResolvedValue({
                 text: 'Mocked screen text',
-                screenshotPath: '/tmp/mock-screenshot.png'
+                screenshotPath: '/tmp/mock-screenshot.png',
+                windowTitle: 'Mocked Window Title'
             })
         }))
     };
@@ -23,6 +24,7 @@ describe('VisionService', () => {
         if (result) {
             expect(result.text).toBe('Mocked screen text');
             expect(result.screenshotPath).toBe('/tmp/mock-screenshot.png');
+            expect(result.windowTitle).toBe('Mocked Window Title');
         }
     });
 });

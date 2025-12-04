@@ -105,12 +105,23 @@ export class ChatCapture {
         return sizeCheck;
       }
 
-      // Parse JSON
+      // Parse JSON (with HTML fallback)
+      let data: unknown;
       const parseResult = this.parseJSON(file);
-      if (!parseResult.ok) {
-        return parseResult;
+      if (parseResult.ok) {
+        data = parseResult.value;
+      } else {
+        const htmlJson = this.extractJsonFromHtml(file);
+        if (!htmlJson.ok) {
+          return parseResult;
+        }
+        const htmlParse = this.parseJSON(htmlJson.value);
+        if (!htmlParse.ok) {
+          return htmlParse;
+        }
+        data = htmlParse.value;
+        this.config.logger.info('Parsed HTML export by extracting embedded JSON', { providerHint: provider });
       }
-      const data = parseResult.value;
 
       // Get parser for provider
       // Requirement 4.3: Select appropriate parser based on explicit provider identifier
@@ -203,12 +214,24 @@ export class ChatCapture {
         return sizeCheck;
       }
 
-      // Parse JSON
+      // Parse JSON; if it fails, try to extract embedded JSON from HTML exports
+      let data: unknown;
       const parseResult = this.parseJSON(file);
-      if (!parseResult.ok) {
-        return parseResult;
+      if (parseResult.ok) {
+        data = parseResult.value;
+      } else {
+        const htmlJson = this.extractJsonFromHtml(file);
+        if (!htmlJson.ok) {
+          // Prefer the HTML-specific error to help the user diagnose
+          return htmlJson;
+        }
+        const htmlParse = this.parseJSON(htmlJson.value);
+        if (!htmlParse.ok) {
+          return htmlParse;
+        }
+        data = htmlParse.value;
+        this.config.logger.info('Parsed HTML export by extracting embedded JSON', { providerHint: 'openai' });
       }
-      const data = parseResult.value;
 
       // Auto-detect provider
       // Requirement 4.4: Support automatic provider detection
@@ -409,6 +432,83 @@ export class ChatCapture {
         cause: error,
       });
     }
+  }
+
+  /**
+   * Extract embedded JSON from an HTML export (e.g., ChatGPT HTML download)
+   */
+  private extractJsonFromHtml(file: Buffer | string): Result<string, CaptureError> {
+    const content = Buffer.isBuffer(file) ? file.toString('utf-8') : file;
+    const lower = content.trim().toLowerCase();
+
+    if (!lower.includes('<html') || !lower.includes('jsondata')) {
+      return err({
+        type: 'parse_error',
+        provider: 'unknown',
+        message: 'Invalid JSON format: Unable to parse file',
+      });
+    }
+
+    // Try to capture jsonData up to the next var/const/let assetsJson (common ChatGPT export pattern)
+    const assetsDelimited = content.match(/jsonData\s*=\s*(\[[\s\S]*?]);\s*(?:var|const|let)\s+assetsJson/i);
+    if (assetsDelimited?.[1]) {
+      return ok(assetsDelimited[1]);
+    }
+
+    // Grab jsonData assignments (var/let/const) with flexible whitespace and multiline arrays
+    const match =
+      content.match(/jsonData\s*=\s*(\[\s*[\s\S]*?\]);/i) ||
+      content.match(/jsonData\s*=\s*(\[\s*[\s\S]*\])/i);
+
+    if (match && match[1]) {
+      return ok(match[1]);
+    }
+
+    // Fallback: capture between jsonData = and </script>, attempting bracket-balance
+    const scriptSplit = content.split(/jsonData\s*=/i);
+    if (scriptSplit.length > 1) {
+      const after = scriptSplit[1];
+      const endIdx = after.indexOf('</script>');
+      const slice = endIdx !== -1 ? after.slice(0, endIdx) : after;
+      const start = slice.indexOf('[');
+      if (start !== -1) {
+        let depth = 0;
+        let inString: string | null = null;
+        let escape = false;
+        for (let i = start; i < slice.length; i++) {
+          const ch = slice[i];
+          if (escape) {
+            escape = false;
+            continue;
+          }
+          if (ch === '\\') {
+            escape = true;
+            continue;
+          }
+          if (inString) {
+            if (ch === inString) {
+              inString = null;
+            }
+            continue;
+          }
+          if (ch === '"' || ch === "'") {
+            inString = ch;
+            continue;
+          }
+          if (ch === '[') depth++;
+          if (ch === ']') depth--;
+          if (depth === 0) {
+            return ok(slice.slice(start, i + 1));
+          }
+        }
+      }
+    }
+
+    return err({
+      type: 'parse_error',
+      provider: 'unknown',
+      message: 'Unable to extract conversations from HTML export',
+    });
   }
 
   /**

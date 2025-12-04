@@ -1,0 +1,43 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.toast {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  left: 8px;
+  padding: 12px 14px;
+  background: rgba(25, 27, 34, 0.94);
+  color: #f8fafc;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 0.18s ease;
+  backdrop-filter: blur(16px) saturate(180%);
+}
+
+.toast.hidden {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.toast-title {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.toast-body {
+  font-size: 12px;
+  color: #cbd5e1;
+  line-height: 1.4;
+}

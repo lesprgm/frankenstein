@@ -6,6 +6,7 @@ interface Node extends d3.SimulationNodeDatum {
     type: string;
     label: string;
     confidence?: number;
+    source_path?: string;
 }
 
 interface Link extends d3.SimulationLinkDatum<Node> {
@@ -19,28 +20,29 @@ export interface GraphData {
     edges: Link[];
 }
 
-export function MemoryGraph({ data }: { data: GraphData }) {
+export function MemoryGraph({ data, compact = false }: { data: GraphData; compact?: boolean }) {
     const svgRef = useRef<SVGSVGElement>(null);
 
     useEffect(() => {
         if (!svgRef.current || !data.nodes.length) return;
 
-        const width = 800;
-        const height = 600;
+        // Compact mode: smaller dimensions, tighter physics
+        const width = compact ? 300 : 800;
+        const height = compact ? 220 : 600;
 
         // Clear previous
         d3.select(svgRef.current).selectAll('*').remove();
 
         const svg = d3.select(svgRef.current)
             .attr('viewBox', [0, 0, width, height])
-            .attr('style', 'max-width: 100%; height: auto; background: #fafafa; border-radius: 12px;');
+            .attr('style', 'max-width: 100%; height: auto; background: transparent; border-radius: 12px;');
 
         // Simulation
         const simulation = d3.forceSimulation(data.nodes)
-            .force('link', d3.forceLink(data.edges).id((d: any) => d.id).distance(120))
-            .force('charge', d3.forceManyBody().strength(-400))
+            .force('link', d3.forceLink(data.edges).id((d: any) => d.id).distance(compact ? 40 : 120))
+            .force('charge', d3.forceManyBody().strength(compact ? -100 : -400))
             .force('center', d3.forceCenter(width / 2, height / 2))
-            .force('collide', d3.forceCollide().radius(30));
+            .force('collide', d3.forceCollide().radius(compact ? 15 : 30));
 
         // Draw lines
         const link = svg.append('g')
@@ -49,7 +51,7 @@ export function MemoryGraph({ data }: { data: GraphData }) {
             .selectAll('line')
             .data(data.edges)
             .join('line')
-            .attr('stroke-width', (d) => Math.sqrt(d.weight * 5));
+            .attr('stroke-width', (d) => Math.sqrt(d.weight * (compact ? 2 : 5)));
 
         // Add Glow Filter
         const defs = svg.append('defs');
@@ -70,57 +72,51 @@ export function MemoryGraph({ data }: { data: GraphData }) {
             .call(drag(simulation) as any);
 
         node.append('circle')
-            .attr('r', (d) => d.type === 'query' ? 14 : 10)
+            .attr('r', (d) => {
+                const base = d.type === 'query' ? 14 : 10;
+                return compact ? base * 0.6 : base;
+            })
             .attr('fill', (d) => colorByType(d.type))
             .attr('stroke', '#fff')
-            .attr('stroke-width', 3)
+            .attr('stroke-width', compact ? 1.5 : 3)
             .style('cursor', (d) => d.type === 'file' ? 'pointer' : 'default')
             .style('filter', (d) => d.type === 'fact.session' ? 'url(#glow)' : 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))')
             .on('click', async (event, d) => {
                 if (d.type === 'file') {
                     event.stopPropagation();
-
-                    // Extract file path from label (format: "file-{path}")
-                    const filePath = d.label;
-
+                    // Try to open via API first, then fallback to postMessage for overlay context
+                    const filePath = (d as Node).source_path || d.label;
                     console.log('[Ghost][MemoryGraph] Opening file:', filePath);
-
                     try {
-                        const response = await fetch('http://localhost:4000/api/open-file', {
+                        await fetch('http://localhost:4000/api/open-file', {
                             method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': 'Bearer ghost-api-key-123' // TODO: Use proper API key
-                            },
+                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ filePath })
                         });
-
-                        const result = await response.json();
-
-                        if (!response.ok) {
-                            console.error('[Ghost][MemoryGraph] Failed to open file:', result.error);
-                            alert(`Failed to open file: ${result.error}`);
-                        } else {
-                            console.log('[Ghost][MemoryGraph] File opened successfully');
-                        }
                     } catch (error) {
-                        console.error('[Ghost][MemoryGraph] Error opening file:', error);
-                        alert(`Error opening file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                        console.error('[Ghost][MemoryGraph] Error opening file via API:', error);
+                        // Fallback: send message to parent window (for overlay context)
+                        if ((d as Node).source_path) {
+                            window.parent.postMessage({
+                                type: 'open-file',
+                                path: (d as Node).source_path
+                            }, '*');
+                        }
                     }
                 }
             })
             .on('mouseover', function (_event, d) {
                 if ((d as Node).type === 'file') {
                     d3.select(this)
-                        .attr('r', 12)
-                        .attr('stroke-width', 4);
+                        .attr('r', compact ? 8 : 12)
+                        .attr('stroke-width', compact ? 2 : 4);
                 }
             })
             .on('mouseout', function (_event, d) {
                 if ((d as Node).type === 'file') {
                     d3.select(this)
-                        .attr('r', 10)
-                        .attr('stroke-width', 3);
+                        .attr('r', compact ? 6 : 10)
+                        .attr('stroke-width', compact ? 1.5 : 3);
                 }
             });
 
@@ -137,23 +133,25 @@ export function MemoryGraph({ data }: { data: GraphData }) {
                 return text;
             });
 
-        // Labels
-        node.append('text')
-            .attr('dx', 18)
-            .attr('dy', 5)
-            .text(d => {
-                // Show just filename for file nodes, full label for others
-                if (d.type === 'file' && d.label.includes('/')) {
-                    return d.label.split('/').pop() || d.label;
-                }
-                return d.label;
-            })
-            .style('font-size', '13px')
-            .style('font-family', '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif')
-            .style('font-weight', '500')
-            .style('fill', '#1D1D1F')
-            .style('stroke', 'none')
-            .style('pointer-events', 'none');
+        // Labels - Hide in compact mode unless it's the query or very few nodes
+        if (!compact || data.nodes.length < 5) {
+            node.append('text')
+                .attr('dx', compact ? 10 : 18)
+                .attr('dy', compact ? 3 : 5)
+                .text(d => {
+                    // Show just filename for file nodes, full label for others
+                    if (d.type === 'file' && d.label.includes('/')) {
+                        return d.label.split('/').pop() || d.label;
+                    }
+                    return d.label;
+                })
+                .style('font-size', compact ? '10px' : '13px')
+                .style('font-family', '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif')
+                .style('font-weight', '500')
+                .style('fill', compact ? '#FFF' : '#1D1D1F') // White text in compact overlay
+                .style('stroke', 'none')
+                .style('pointer-events', 'none');
+        }
 
         simulation.on('tick', () => {
             link
@@ -201,7 +199,7 @@ export function MemoryGraph({ data }: { data: GraphData }) {
             }
         }
 
-    }, [data]);
+    }, [data, compact]);
 
     return <svg ref={svgRef} />;
 }

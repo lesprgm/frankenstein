@@ -1,11 +1,13 @@
 import { Notification, shell } from 'electron';
 import type { MemoryReference } from '../types';
+import type { WindowManager } from '../windows/window-manager';
 
 export interface NotificationParams {
     commandId: string;
     summary: string;
     memoryCount: number;
     primarySource?: string;
+    memories?: MemoryReference[];
 }
 
 /**
@@ -14,18 +16,42 @@ export interface NotificationParams {
  */
 export class ExplainabilityNotifier {
     private dashboardUrl: string;
+    private windowManager?: WindowManager;
+    private apiKey?: string;
 
-    constructor(dashboardUrl: string = 'http://localhost:5174') {
+    constructor(dashboardUrl: string = 'http://localhost:5174', windowManager?: WindowManager, apiKey?: string) {
         this.dashboardUrl = dashboardUrl;
+        this.windowManager = windowManager;
+        this.apiKey = apiKey;
     }
 
     /**
      * Show notification explaining why Ghost retrieved specific memories
      */
     async showContextNotification(params: NotificationParams): Promise<void> {
-        const { commandId, summary, memoryCount, primarySource } = params;
+        const { commandId, summary, memoryCount, primarySource, memories } = params;
 
-        // Build notification body
+        // Try to show overlay first if available and we have memories
+        if (this.windowManager && memories && memories.length > 0) {
+            try {
+                // Convert memories to overlay source format
+                const sources = memories.map(m => ({
+                    id: m.id,
+                    type: m.type,
+                    score: m.score,
+                    summary: m.summary,
+                    metadata: m.metadata
+                }));
+
+                this.windowManager.showOverlay(sources, commandId, this.apiKey);
+                return;
+            } catch (err) {
+                console.error('[Ghost][ExplainabilityNotifier] Failed to show overlay:', err);
+            }
+        }
+
+        // Fallback to native notification - DISABLED for custom overlay demo
+        /*
         const body = this.buildNotificationBody(summary, memoryCount, primarySource);
 
         const notification = new Notification({
@@ -50,6 +76,7 @@ export class ExplainabilityNotifier {
         setTimeout(() => {
             notification.close();
         }, 5000);
+        */
     }
 
     /**

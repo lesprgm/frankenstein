@@ -19,6 +19,11 @@ export class RemindersService {
     }
 
     async createReminder(params: CreateReminderParams): Promise<{ success: boolean; error?: string }> {
+        // Short-circuit in non-macOS or sandboxed environments to avoid hangs
+        if (process.platform !== 'darwin' || process.env.SWIFT_REMINDERS_DISABLED === 'true') {
+            return { success: false, error: 'Reminders not available in this environment' };
+        }
+
         try {
             const args = [
                 this.swiftScriptPath,
@@ -30,7 +35,7 @@ export class RemindersService {
                 args.push(params.dueDate);
             }
 
-            const { stdout, stderr } = await execFileAsync('swift', args);
+            const { stdout, stderr } = await execFileAsync('swift', args, { timeout: 3000 });
 
             if (stdout.includes('Success:')) {
                 return { success: true };

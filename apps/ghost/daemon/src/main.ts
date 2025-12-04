@@ -1,5 +1,9 @@
 import path from 'node:path';
-import { app, BrowserWindow, Menu, Notification, Tray, nativeImage, ipcMain, shell } from 'electron';
+import crypto from 'node:crypto';
+import type { Tray as TrayType, IpcMainEvent } from 'electron';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const electron = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, shell } = electron;
 import { loadConfig } from './config';
 import { WindowManager } from './windows/window-manager';
 import { GhostAPIClient } from './services/api-client';
@@ -22,7 +26,7 @@ const config = loadConfig();
 const visionConfig = config.vision ?? { enabled: true, captureMode: 'on-demand' as const };
 const api = new GhostAPIClient(config);
 const hotkey = new HotkeyHandler(config.voice.hotkey);
-let tray: Tray | null = null;
+let tray: TrayType | null = null;
 const windowManager = new WindowManager();
 let voicePipeline: VoicePipeline;
 const stt = new WhisperSTT(config.voice.sttApiKey, {
@@ -36,10 +40,11 @@ import { ExplainabilityNotifier } from './services/explainability-notifier';
 
 import { VisionService } from './services/vision';
 import { RemindersService } from './services/reminders';
+import { attachOverlayWindowManager, showOverlayToast } from './services/overlay-notifier';
 
 // Create voice feedback service and action executor with TTS support
 const voiceFeedback = new VoiceFeedbackService(textToSpeech);
-const explainabilityNotifier = new ExplainabilityNotifier();
+const explainabilityNotifier = new ExplainabilityNotifier('http://localhost:5174', windowManager, config.backend.apiKey);
 const remindersService = new RemindersService();
 const actionExecutor = new ActionExecutor(voiceFeedback, explainabilityNotifier, remindersService, api);
 const visionService = new VisionService();
@@ -48,8 +53,12 @@ function createTray(): void {
   const base64Icon = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAt8B9JpN5VQAAAAASUVORK5CYII=';
   const icon = nativeImage.createFromBuffer(Buffer.from(base64Icon, 'base64'));
   tray = new Tray(icon);
-  tray.setToolTip('Ghost Daemon');
+  if (tray) tray.setToolTip('Ghost is running');
   const menu = Menu.buildFromTemplate([
+    {
+      label: 'Show overlay toast (test)',
+      click: () => showOverlayToast('Ghost', 'This is the custom overlay'),
+    },
     {
       label: 'Scan files',
       click: () => triggerFileScan(),
@@ -59,7 +68,7 @@ function createTray(): void {
       click: () => app.quit(),
     },
   ]);
-  tray.setContextMenu(menu);
+  if (tray) tray.setContextMenu(menu);
 }
 
 async function triggerFileScan(): Promise<void> {
@@ -85,7 +94,7 @@ async function triggerFileScan(): Promise<void> {
         'Failed to index files';
       throw new Error(message);
     }
-    new Notification({ title: 'Ghost', body: `Indexed ${files.length} files` }).show();
+    showOverlayToast('Ghost', `Indexed ${files.length} files`);
   } catch (error) {
     notifyError('File scan failed', error instanceof Error ? error.message : 'Unknown error');
   }
@@ -110,13 +119,14 @@ async function handleHotkey(): Promise<void> {
     console.info('[Ghost] Hotkey activated — starting recording');
 
     // Stage 1: Screen Capture (parallel with recording)
+    // Only capture if mode is explicitly 'always' (default should be 'on-demand')
     let screenCapturePromise: Promise<{ text: string; screenshotPath: string } | null> | null = null;
     const shouldCapturePreStt =
       visionConfig.enabled && visionConfig.captureMode === 'always';
 
     const visionStart = Date.now();
     if (shouldCapturePreStt) {
-      console.log('[Ghost][PERF] 📸 Vision capture started');
+      console.log('[Ghost][PERF] 📸 Vision capture started (Pre-emptive)');
       screenCapturePromise = visionService.captureScreenContext();
     }
 
@@ -224,70 +234,34 @@ async function handleHotkey(): Promise<void> {
     console.log('[Ghost][PERF] ⚙️  Action execution started');
     const actionResults = await actionExecutor.executeBatch(response.actions, {
       commandId: response.command_id,
-      memories: response.memories_used
+      memories: response.memories_used,
+      screenContext: screenContext && screenshotPath ? { text: screenContext, screenshotPath } : undefined
     });
     const actionDuration = Date.now() - actionStart;
     console.log(`[Ghost][PERF] ✅ Actions completed in ${actionDuration}ms`);
 
     await api.sendActionResults(response.command_id, actionResults);
 
-    // Show native Mac notification with sources instead of overlay
+    // Show overlay with sources instead of native notification
     if (response.memories_used && response.memories_used.length > 0) {
-      const sourceCount = response.memories_used.length;
-      const primarySource = response.memories_used[0];
+      const deduped = dedupeSources(
+        response.memories_used.map((m: any) => ({
+          id: m.id,
+          type: m.type,
+          score: m.score,
+          summary: m.summary,
+          metadata: m.metadata
+        }))
+      );
 
-      console.log('[Ghost][Notification] Creating notification for', sourceCount, 'sources');
-      console.log('[Ghost][Notification] Primary source:', JSON.stringify(primarySource, null, 2));
-
-      // Get filename from path or name
-      const sourceName = primarySource.metadata?.path
-        ? primarySource.metadata.path.split('/').pop() || 'Unknown'
-        : primarySource.metadata?.name || 'Unknown source';
-
-      console.log('[Ghost][Notification] Source name:', sourceName);
-
-      // Create notification body with source preview
-      let body = `Found in ${sourceCount} source${sourceCount > 1 ? 's' : ''}`;
-      if (primarySource.summary) {
-        // Truncate summary for notification
-        const preview = primarySource.summary.length > 100
-          ? primarySource.summary.substring(0, 100) + '...'
-          : primarySource.summary;
-        body += `\n\n${preview}`;
-      }
-
-      console.log('[Ghost][Notification] Notification body:', body);
-
-      try {
-        const notification = new Notification({
-          title: `📄 ${sourceName}`,
-          body: body,
-          silent: false,
-          timeoutType: 'default'
-        });
-
-        // Add click handler to open dashboard with memory data
-        notification.on('click', () => {
-          console.log('[Ghost][Notification] Notification clicked! Opening dashboard...');
-
-          // Open dashboard URL with command ID as query param
-          const dashboardUrl = `http://localhost:5174/command/${response.command_id}`;
-          shell.openExternal(dashboardUrl).catch(err => {
-            console.error('[Ghost] Failed to open dashboard:', err);
-          });
-        });
-
-        console.log('[Ghost][Notification] Notification object created:', notification);
-        console.log('[Ghost][Notification] Calling show()...');
-
-        notification.show();
-
-        console.log('[Ghost][Notification] show() called successfully');
-        console.info('[Ghost] Showed native notification with', sourceCount, 'sources');
-      } catch (error) {
-        console.error('[Ghost][Notification] ERROR creating/showing notification:', error);
-      }
+      windowManager.showOverlay(deduped, response.command_id, config.backend.apiKey);
+      console.info('[Ghost] Showed overlay with', deduped.length, 'sources');
     } else {
+      // If no sources, just show a simple notification if needed, or nothing.
+      // For now, let's show the overlay anyway if there's a command ID, so the graph can show "Command" node.
+      if (response.command_id) {
+        windowManager.showOverlay([], response.command_id, config.backend.apiKey);
+      }
       console.info('[Ghost] No memories to show');
     }
 
@@ -311,7 +285,7 @@ async function handleHotkey(): Promise<void> {
 
 function notifyError(title: string, message: string): void {
   console.error(title, message);
-  new Notification({ title, body: message }).show();
+  showOverlayToast(title, message);
 }
 
 app.whenReady().then(() => {
@@ -321,6 +295,7 @@ app.whenReady().then(() => {
 
   windowManager.createMainWindow();
   windowManager.createOverlayWindow();
+  attachOverlayWindowManager(windowManager);
 
   // Initialize Voice Pipeline
   voicePipeline = new VoicePipeline(
@@ -343,12 +318,23 @@ app.whenReady().then(() => {
     windowManager.hideOverlay();
   });
 
-  ipcMain.on('ghost/overlay/resize', (event, height) => {
+  ipcMain.on('ghost/overlay/resize', (event: IpcMainEvent, height: number) => {
     windowManager.resizeOverlay(height);
   });
 
-  ipcMain.on('ghost/overlay/open-file', (event, filePath) => {
-    shell.openPath(filePath);
+  ipcMain.on('ghost/overlay/open-file', async (_event: IpcMainEvent, filePath: string) => {
+    try {
+      await shell.openPath(filePath);
+    } finally {
+      // Drop the overlay so the opened app/file can receive scroll and input
+      windowManager.hideOverlay();
+    }
+  });
+
+  ipcMain.on('ghost/overlay/open-dashboard', (event: IpcMainEvent, commandId: string) => {
+    const dashboardUrl = `http://localhost:5174/command/${commandId}`;
+    console.log('[Ghost] Opening dashboard:', dashboardUrl);
+    shell.openExternal(dashboardUrl);
   });
 
   app.on('activate', () => {
@@ -367,21 +353,81 @@ app.whenReady().then(() => {
   );
 
   // Hook into hotkey handler to pause/resume wake word
-  hotkey.on('activate', () => {
+  hotkey.on('activate', async () => {
+    console.log('[Ghost] Hotkey triggered');
     wakeWordService.pause();
-    handleHotkey().finally(() => wakeWordService.resume());
+
+    // Give a small buffer for the loop to actually stop recording if it was in the middle of it
+    // This is a hack, but effective for the demo to prevent "Recording already in progress"
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Force stop any active recording in the pipeline if possible, or just wait
+    // Ideally voicePipeline should have a 'stopRecording' method, but for now we rely on the pause
+
+    // Feedback to simulate wake word
+    await textToSpeech.speak('Mhmm?');
+
+    handleHotkey().finally(() => {
+      console.log('[Ghost] Hotkey finished, resuming wake word');
+      wakeWordService.resume();
+    });
   });
 
-  wakeWordService.start();
+  // wakeWordService.start();
+  console.log('[Ghost] Wake word service disabled for stability. Use hotkey to activate.');
 });
 
 app.on('will-quit', () => {
   hotkey.unregister();
 });
 
+const MIN_OVERLAY_SCORE = 0.35;
+const MAX_NODES_PER_SOURCE = 3;
 
+function dedupeSources(sources: Array<{ id: string; type: string; summary: string; score?: number; metadata?: any }>) {
+  const seen = new Map<string, { id: string; type: string; summary: string; score?: number; metadata?: any }>();
+
+  for (const s of sources) {
+    const key = crypto.createHash('md5').update(`${s.type}|${s.summary}`).digest('hex');
+    if (!seen.has(key)) {
+      seen.set(key, s);
+    } else {
+      const existing = seen.get(key)!;
+      if ((s.score ?? 0) > (existing.score ?? 0)) {
+        seen.set(key, s);
+      }
+    }
+  }
+
+  const deduped = Array.from(seen.values());
+
+  // Filter out low-signal nodes unless they are explicit file/entity references
+  const filtered = deduped.filter(
+    (s) => (s.score ?? 0) >= MIN_OVERLAY_SCORE || s.type?.startsWith('entity.file')
+  );
+
+  // Limit how many nodes we show per source (path/name/summary bucket) to keep the graph concise
+  const grouped = new Map<string, Array<{ id: string; type: string; summary: string; score?: number; metadata?: any }>>();
+  for (const s of filtered) {
+    const sourceKey =
+      (s.metadata?.path?.toLowerCase?.() as string) ||
+      (s.metadata?.name?.toLowerCase?.() as string) ||
+      s.summary?.toLowerCase() ||
+      'unknown';
+    const list = grouped.get(sourceKey) ?? [];
+    if (list.length < MAX_NODES_PER_SOURCE) {
+      list.push(s);
+      grouped.set(sourceKey, list);
+    }
+  }
+
+  return Array.from(grouped.values())
+    .flat()
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+}
 
 function mentionsScreen(text: string): boolean {
   const lower = text.toLowerCase();
-  return /(on my screen|on the screen|what'?s on my screen|look at this|see on screen|this screen)/.test(lower);
+  // Capture only when the user clearly asks about the screen or requests a reminder of what's visible
+  return /(\bremind me\b|\bremember (this|that)\b|\bsave this\b|what('?s)? on (my |the )?screen|look at (this|my screen)|see on screen|this screen|what am i looking at)/.test(lower);
 }

@@ -15,7 +15,7 @@ export class WhisperSTT {
   constructor(
     private apiKey?: string,
     private opts?: { endpoint?: string; model?: string; provider?: string }
-  ) {}
+  ) { }
 
   async transcribe(audio: Buffer): Promise<Result<string, VoiceError>> {
     if (!audio || audio.length === 0) {
@@ -48,7 +48,22 @@ export class WhisperSTT {
         const wavPath = path.join(tmpDir, 'audio.wav');
         fs.writeFileSync(wavPath, audio);
 
-        const whisperCmd = process.env.WHISPER_CMD || 'whisper';
+        // Resolve whisper binary path
+        // 1. Check env var
+        // 2. Check project venv (dist/voice -> frankenstein is 5 levels up)
+        // 3. Fallback to 'whisper' in PATH
+        let whisperCmd = process.env.WHISPER_CMD;
+        if (!whisperCmd) {
+          const venvPath = path.resolve(__dirname, '../../../../../venv/bin/whisper');
+          if (fs.existsSync(venvPath)) {
+            whisperCmd = venvPath;
+            console.info('[Ghost][STT] Using venv whisper:', venvPath);
+          } else {
+            whisperCmd = 'whisper';
+            console.warn('[Ghost][STT] venv whisper not found at', venvPath, '- falling back to PATH');
+          }
+        }
+
         const model = sttModel === 'default' ? 'small' : sttModel;
         const baseName = path.basename(wavPath, path.extname(wavPath));
         const args = [

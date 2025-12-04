@@ -9,6 +9,15 @@ const toast = document.getElementById('toast');
 const toastTitle = document.getElementById('toast-title');
 const toastBody = document.getElementById('toast-body');
 let toastTimeout = null;
+let resizeTimeout = null;
+
+function requestOverlayResize(delay = 50) {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(() => {
+        const height = document.body.scrollHeight;
+        ipcRenderer.send('ghost/overlay/resize', height);
+    }, delay);
+}
 
 function getFileType(source) {
     if (source.metadata && source.metadata.name) {
@@ -66,10 +75,7 @@ function renderSources(sources) {
     });
 
     // Send resize event
-    setTimeout(() => {
-        const height = document.body.scrollHeight;
-        ipcRenderer.send('ghost/overlay/resize', height);
-    }, 50);
+    requestOverlayResize();
 }
 
 // Global API key storage
@@ -114,6 +120,7 @@ function renderGraph(commandId) {
             if (!command || !command.memories_used) {
                 console.warn('No memories found for command:', commandId);
                 graphContainer.style.display = 'none';
+                requestOverlayResize();
                 return;
             }
 
@@ -177,6 +184,7 @@ function renderGraph(commandId) {
 
             // Show container
             graphContainer.style.display = 'flex';
+            requestOverlayResize();
 
             // Create D3 force simulation
             const width = 320;
@@ -285,6 +293,7 @@ function renderGraph(commandId) {
             errorText.setAttribute('font-size', '12px');
             errorText.textContent = 'Graph unavailable';
             svg.appendChild(errorText);
+            requestOverlayResize();
         });
 }
 

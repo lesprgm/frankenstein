@@ -9,6 +9,9 @@ export interface CommandRequest {
   text: string;
   timestamp: string;
   screen_context?: string;
+  active_path?: string; // optional: path of the currently focused file/window, used for scroll/open intents
+  scroll_progress?: number; // optional: 0-1 estimate of how far down the active document we are
+  scroll_direction?: 'up' | 'down'; // optional: direction hint from the client
   screenshot_path?: string;
   meta: {
     source: 'voice';

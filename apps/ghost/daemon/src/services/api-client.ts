@@ -156,6 +156,23 @@ export class GhostAPIClient {
       return { ok: false, error };
     }
   }
+
+  /**
+   * Create a memory (for demo mode reminder storage)
+   */
+  async createMemory(memory: { type: string; summary: string; metadata: any }): Promise<Result<{ id: string }, any>> {
+    try {
+      const payload = {
+        user_id: this.userId,
+        ...memory,
+        timestamp: new Date().toISOString()
+      };
+      const response = await this.client.post('/api/memories/create', payload);
+      return { ok: true, value: response.data };
+    } catch (error) {
+      return { ok: false, error };
+    }
+  }
 }
 
 function parseSSE(raw: string): { event: string | null; data: string | null } {

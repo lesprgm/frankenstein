@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
 import { StorageClient, SqliteConfig } from '@memorylayer/storage';
 import { initializeDatabase, seedDemoData } from '../db/migrations.js';
+import { computeFileFingerprint } from '../utils/file-fingerprint.js';
 import type {
     ActionResult,
     CommandEntry,
@@ -49,6 +50,9 @@ export class SQLiteStorage {
         if (commandCount.count === 0) {
             seedDemoData(this.db);
         }
+
+        // Backfill fingerprints so skip-on-unchanged works for existing indexed files
+        this.backfillFileFingerprints();
     }
 
     /**
@@ -200,20 +204,14 @@ export class SQLiteStorage {
 
             // Create a simple relationship from the collection root to each memory
             try {
-                this.insertRelationship(collectionMemoryId, mem.id, 'contains', 0.8);
+                const relConfidence = Math.max(0, Math.min(1, mem.score ?? 0.8));
+                this.insertRelationship(collectionMemoryId, mem.id, 'contains', relConfidence);
             } catch (error) {
                 console.warn('Failed to create relationship (skipping)', { from: collectionMemoryId, to: mem.id, error });
             }
         }
 
-        // Build the relationship only if both endpoints exist
-        const fromExists = this.db.prepare('SELECT 1 FROM memories WHERE id = ?').get(collectionMemoryId);
-        for (const mem of memories) {
-            const toExists = this.db.prepare('SELECT 1 FROM memories WHERE id = ?').get(mem.id);
-            if (fromExists && toExists) {
-                this.insertRelationship(collectionMemoryId, mem.id, 'contains', 0.8);
-            }
-        }
+        // Relationships are already added above; avoid duplicate inserts.
     }
 
     /**
@@ -707,6 +705,7 @@ export class SQLiteStorage {
      * Build a memory object for a file index entry
      */
     private buildFileMemory(file: FileMetadata, userId: string): MemoryReference {
+        const fingerprint = computeFileFingerprint(file.path, file.size, file.modified);
         return {
             id: `file-${crypto.createHash('md5').update(file.path).digest('hex')}`,
             type: 'entity.file',
@@ -718,8 +717,115 @@ export class SQLiteStorage {
                 modified: file.modified,
                 size: file.size,
                 userId,
+                fingerprint,
             },
         };
+    }
+
+    /**
+     * Find file memories by matching name/path/content for open/view intents.
+     */
+    async findFileByNameOrPath(
+        queryText: string,
+        workspaceId: string,
+        limit: number = 3
+    ): Promise<MemoryReference[]> {
+        const safeQuery = queryText.replace(/[%_]/g, ''); // basic LIKE escaping
+        const like = `%${safeQuery}%`;
+
+        const rows = this.db
+            .prepare(
+                `
+        SELECT * FROM memories
+        WHERE workspace_id = ?
+          AND type = 'entity.file'
+          AND (
+            content LIKE @like OR
+            metadata LIKE @like
+          )
+        ORDER BY created_at DESC
+        LIMIT @limit
+        `
+            )
+            .all(workspaceId, { like, limit }) as any[];
+
+        return rows.map((row) => ({
+            id: row.id,
+            type: row.type,
+            score: row.confidence,
+            summary: row.content,
+            metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        }));
+    }
+
+    /**
+     * Check whether a file is unchanged based on stored fingerprint/metadata.
+     * If metadata exists and matches (but lacks fingerprint), backfill fingerprint.
+     */
+    async isFileUnchanged(file: FileMetadata, workspaceId: string): Promise<boolean> {
+        const fingerprint = computeFileFingerprint(file.path, file.size, file.modified);
+        const fileId = `file-${crypto.createHash('md5').update(file.path).digest('hex')}`;
+        const row = this.db
+            .prepare(
+                `SELECT metadata FROM memories WHERE id = ? AND workspace_id = ? AND type = 'entity.file'`
+            )
+            .get(fileId, workspaceId) as any;
+
+        if (!row) return false;
+
+        let metadata: any;
+        try {
+            metadata = JSON.parse(row.metadata);
+        } catch {
+            return false;
+        }
+
+        // If fingerprint matches, unchanged.
+        if (metadata?.fingerprint === fingerprint) {
+            return true;
+        }
+
+        // If size/modified match, backfill fingerprint and treat as unchanged.
+        const sameSize = metadata?.size === file.size;
+        const sameModified = metadata?.modified === file.modified;
+        if (sameSize && sameModified) {
+            metadata.fingerprint = fingerprint;
+            this.db
+                .prepare(`UPDATE memories SET metadata = ?, updated_at = datetime('now') WHERE id = ? AND workspace_id = ?`)
+                .run(JSON.stringify(metadata), fileId, workspaceId);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Backfill fingerprints for existing file memories lacking one.
+     */
+    backfillFileFingerprints(): void {
+        const rows = this.db
+            .prepare(`SELECT id, metadata, workspace_id FROM memories WHERE type = 'entity.file'`)
+            .all() as any[];
+
+        const updateStmt = this.db.prepare(
+            `UPDATE memories SET metadata = ?, updated_at = datetime('now') WHERE id = ? AND workspace_id = ?`
+        );
+
+        for (const row of rows) {
+            let metadata: any;
+            try {
+                metadata = JSON.parse(row.metadata);
+            } catch {
+                continue;
+            }
+            if (metadata?.fingerprint) continue;
+
+            const fingerprint = computeFileFingerprint(metadata?.path, metadata?.size, metadata?.modified);
+            if (!fingerprint) continue;
+
+            metadata.fingerprint = fingerprint;
+            updateStmt.run(JSON.stringify(metadata), row.id, row.workspace_id);
+        }
     }
 
     /**

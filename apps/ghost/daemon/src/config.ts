@@ -16,7 +16,8 @@ const DEFAULT_CONFIG: DaemonConfig = {
   },
   vision: {
     enabled: true,
-    captureMode: 'always',
+    // Only capture when explicitly requested ("remind me", "what's on my screen", etc.)
+    captureMode: 'on-demand',
   },
   privacy: {
     mode: 'local-preferred',

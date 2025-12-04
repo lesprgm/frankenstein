@@ -34,28 +34,36 @@ export const streamLatestCommand = (callbacks: {
   let active = true;
 
   const connect = () => {
-    const eventSource = new EventSource(`${client.defaults.baseURL}/api/command/stream/latest`);
+    const base = (client.defaults.baseURL || '').replace(/\/$/, '');
+    const apiKeyParam = API_KEY ? `?apiKey=${encodeURIComponent(API_KEY)}` : '';
+    const url = `${base}/api/dashboard/stream-latest${apiKeyParam}`;
+    const eventSource = new EventSource(url);
 
-    eventSource.onmessage = (event) => {
-      if (!active) {
-        eventSource.close();
-        return;
-      }
-
+    const handleToken = (event: MessageEvent) => {
+      if (!active) return;
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'token') {
-          callbacks.onToken(data.content);
-        } else if (data.type === 'final') {
-          callbacks.onFinal(data.content);
-          // Don't close, keep listening for next command
-        } else if (data.type === 'ping') {
-          // heartbeat
-        }
+        const text = data?.text;
+        if (text) callbacks.onToken(text);
+      } catch (err) {
+        console.error('Stream token parse error', err);
+      }
+    };
+
+    const handleFinal = (event: MessageEvent) => {
+      if (!active) return;
+      try {
+        const data = JSON.parse(event.data);
+        const command = data?.command || data?.content;
+        if (command) callbacks.onFinal(command);
       } catch (err) {
         console.error('Stream parse error', err);
       }
     };
+
+    eventSource.addEventListener('token', handleToken);
+    eventSource.addEventListener('final', handleFinal);
+    eventSource.addEventListener('ping', () => { /* keep-alive */ });
 
     eventSource.onerror = (err) => {
       if (active) {
@@ -69,6 +77,8 @@ export const streamLatestCommand = (callbacks: {
 
     return () => {
       active = false;
+      eventSource.removeEventListener('token', handleToken);
+      eventSource.removeEventListener('final', handleFinal);
       eventSource.close();
     };
   };

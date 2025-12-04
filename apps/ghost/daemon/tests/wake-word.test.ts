@@ -112,8 +112,8 @@ describe('WakeWordService', () => {
         // We need to mock the next call to avoid unhandled rejection in the loop
         mockPipeline.recordBackground.mockResolvedValueOnce(Buffer.from(''));
 
-        // Advance time to let loop resume
-        await vi.advanceTimersByTimeAsync(100);
+        // Advance time to let loop resume - need more time for async operations
+        await vi.advanceTimersByTimeAsync(2200);
         expect(mockPipeline.recordBackground).toHaveBeenCalled();
     });
 });

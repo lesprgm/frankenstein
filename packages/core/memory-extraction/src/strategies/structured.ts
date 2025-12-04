@@ -93,11 +93,10 @@ export class StructuredOutputStrategy implements ExtractionStrategy {
         conversation.messages.map(m => m.id)
       );
     } catch (error) {
-      // Add context to error and re-throw for higher level handling
-      if (error instanceof Error) {
-        error.message = `StructuredOutputStrategy extraction failed for conversation ${conversation.id}: ${error.message}`;
-      }
-      throw error;
+      this.throwWithContext(
+        `StructuredOutputStrategy extraction failed for conversation ${conversation.id}`,
+        error
+      );
     }
   }
 
@@ -145,11 +144,10 @@ export class StructuredOutputStrategy implements ExtractionStrategy {
 
       return extractionResult;
     } catch (error) {
-      // Add context to error and re-throw for higher level handling
-      if (error instanceof Error) {
-        error.message = `StructuredOutputStrategy chunk extraction failed for chunk ${chunkId}: ${error.message}`;
-      }
-      throw error;
+      this.throwWithContext(
+        `StructuredOutputStrategy chunk extraction failed for chunk ${chunkId}`,
+        error
+      );
     }
   }
 
@@ -179,11 +177,10 @@ export class StructuredOutputStrategy implements ExtractionStrategy {
         messages.map(m => m.id)
       );
     } catch (error) {
-      // Add context to error and re-throw for higher level handling
-      if (error instanceof Error) {
-        error.message = `StructuredOutputStrategy incremental extraction failed for conversation ${context.conversationId}: ${error.message}`;
-      }
-      throw error;
+      this.throwWithContext(
+        `StructuredOutputStrategy incremental extraction failed for conversation ${context.conversationId}`,
+        error
+      );
     }
   }
 
@@ -502,6 +499,16 @@ Return your analysis in the structured format.`;
       memories: [],
       relationships: []
     };
+  }
+
+  /**
+   * Wrap errors with additional context without mutating provider error objects.
+   */
+  private throwWithContext(prefix: string, err: unknown): never {
+    const base = err instanceof Error ? err : new Error(String(err));
+    const wrapped = new Error(`${prefix}: ${base.message}`);
+    (wrapped as any).cause = base;
+    throw wrapped;
   }
 
   /**

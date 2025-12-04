@@ -2,8 +2,8 @@ import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Notification } from 'electron';
 import type { VoiceConfig } from './types';
+import { showOverlayToast } from './services/overlay-notifier';
 
 /**
  * TTS wrapper supporting system voices and ElevenLabs.
@@ -54,7 +54,7 @@ export class TextToSpeech {
     return new Promise((resolve, reject) => {
       const command = this.buildCommand(text);
       if (!command) {
-        new Notification({ title: 'Ghost', body: text }).show();
+        showOverlayToast('Ghost', text);
         resolve();
         return;
       }

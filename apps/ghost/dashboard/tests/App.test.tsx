@@ -4,19 +4,19 @@ import { BrowserRouter } from 'react-router-dom';
 
 // Mock the API module
 vi.mock('../src/api', () => ({
-    fetchDashboardData: vi.fn().mockResolvedValue({
-        commands: [],
-        stats: { totalCommands: 0, totalMemories: 0, successRate: 0, avgResponseTime: 0 }
-    }),
-    activateGhost: vi.fn().mockResolvedValue({ ok: true }),
-    streamLatestCommand: vi.fn(() => () => { }), // Returns cleanup function
-    fetchCommandById: vi.fn(),
-    fetchExplanation: vi.fn(),
+  __esModule: true,
+  fetchDashboardData: vi.fn().mockResolvedValue({
+    commands: [],
+    stats: { totalCommands: 0, totalMemories: 0, successRate: 0, avgResponseTime: 0 }
+  }),
+  activateGhost: vi.fn().mockResolvedValue({ ok: true }),
+  streamLatestCommand: vi.fn(() => () => { }), // Returns cleanup function
+  fetchCommandById: vi.fn(),
+  fetchExplanation: vi.fn(),
 }));
 
 // Import after mocks
-const App = await import('../src/App');
-const DashboardHome = (App as any).default;
+import { App as DashboardHome } from '../src/App';
 
 describe('App - Audio Visualizer', () => {
     it('shows audio visualizer when listening', async () => {

@@ -20,27 +20,49 @@ app.post('/create', async (c) => {
             return c.json({ error: 'user_id, type, and summary are required' }, 400);
         }
 
-        // Store the memory directly in storage
-        const db = (storageService as any).db;
         const id = crypto.randomUUID();
+        const createdAt = timestamp || new Date().toISOString();
+        const updatedAt = new Date().toISOString();
 
-        const result = await db.run(
-            `INSERT INTO memories (id, workspace_id, type, content, embedding, metadata, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                id,
-                user_id,
-                type,
-                summary,
-                null, // No embedding for reminders yet
-                JSON.stringify(metadata || {}),
-                timestamp || new Date().toISOString(),
-                new Date().toISOString()
-            ]
-        );
+        // If we have a raw DB (SQLiteStorage), use it; otherwise fallback to in-memory addMemories
+        const db = (storageService as any).db;
+        if (db && typeof db.run === 'function') {
+            const result = await db.run(
+                `INSERT INTO memories (id, workspace_id, type, content, embedding, metadata, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    id,
+                    user_id,
+                    type,
+                    summary,
+                    null, // No embedding for reminders yet
+                    JSON.stringify(metadata || {}),
+                    createdAt,
+                    updatedAt
+                ]
+            );
 
-        if (!result.ok) {
-            return c.json({ error: 'Failed to create memory' }, 500);
+            if (!result.ok) {
+                return c.json({ error: 'Failed to create memory' }, 500);
+            }
+        } else if (typeof (storageService as any).addMemories === 'function') {
+            // In-memory fallback
+            (storageService as any).addMemories([
+                {
+                    id,
+                    workspace_id: user_id,
+                    type,
+                    content: summary,
+                    score: 0.5,
+                    summary,
+                    metadata: metadata || {},
+                    createdAt,
+                    updatedAt,
+                    source: 'command'
+                }
+            ]);
+        } else {
+            return c.json({ error: 'No storage adapter available for createMemory' }, 500);
         }
 
         console.log('[Ghost][Memories] Created reminder memory:', id);

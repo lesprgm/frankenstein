@@ -66,6 +66,71 @@ describe('ChatCapture', () => {
       }
     });
 
+    it('should parse ChatGPT HTML export with explicit provider', async () => {
+      const htmlExport = `
+        <html>
+          <body>
+            <script>
+              var jsonData = [{
+                "title": "HTML Explicit",
+                "mapping": {
+                  "root": { "id": "root", "message": null, "parent": null, "children": ["child-1"] },
+                  "child-1": {
+                    "id": "child-1",
+                    "message": { "id": "m1", "author": { "role": "user" }, "content": { "parts": ["Hi HTML explicit"] }, "create_time": 1 },
+                    "parent": "root",
+                    "children": []
+                  }
+                },
+                "conversation_id": "html-explicit-1"
+              }];
+            </script>
+          </body>
+        </html>
+      `;
+
+      const result = await chatCapture.parseFile(htmlExport, 'openai');
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toHaveLength(1);
+        expect(result.value[0].external_id).toBe('html-explicit-1');
+        expect(result.value[0].messages[0].content).toBe('Hi HTML explicit');
+      }
+    });
+
+    it('should parse HTML export when assetsJson follows jsonData', async () => {
+      const htmlExport = `
+        <html>
+          <body>
+            <script>
+              const jsonData = [{
+                "title": "HTML With Assets",
+                "mapping": {
+                  "root": { "id": "root", "message": null, "parent": null, "children": ["c1"] },
+                  "c1": {
+                    "id": "c1",
+                    "message": { "id": "m1", "author": { "role": "user" }, "content": { "parts": ["Hi assets"] }, "create_time": 1 },
+                    "parent": "root",
+                    "children": []
+                  }
+                },
+                "conversation_id": "html-assets-1"
+              }];
+              const assetsJson = {};
+            </script>
+          </body>
+        </html>
+      `;
+
+      const result = await chatCapture.parseFile(htmlExport, 'openai');
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value[0].external_id).toBe('html-assets-1');
+        expect(result.value[0].messages[0].content).toBe('Hi assets');
+      }
+    });
+
     it('should return error for unknown provider', async () => {
       const data = { test: 'data' };
       const result = await chatCapture.parseFile(
@@ -328,6 +393,102 @@ describe('ChatCapture', () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value[0].provider).toBe('openai');
+      }
+    });
+
+    it('should parse ChatGPT HTML export with embedded jsonData', async () => {
+      const htmlExport = `
+        <html>
+          <head><title>ChatGPT Export</title></head>
+          <body>
+            <script>
+              var jsonData = [{
+                "title": "HTML Chat",
+                "create_time": 1700000000,
+                "mapping": {
+                  "root": {
+                    "id": "root",
+                    "message": null,
+                    "parent": null,
+                    "children": ["child-1"]
+                  },
+                  "child-1": {
+                    "id": "child-1",
+                    "message": {
+                      "id": "msg-1",
+                      "author": { "role": "user" },
+                      "content": { "content_type": "text", "parts": ["Hi from HTML"] },
+                      "create_time": 1700000000
+                    },
+                    "parent": "root",
+                    "children": ["child-2"]
+                  },
+                  "child-2": {
+                    "id": "child-2",
+                    "message": {
+                      "id": "msg-2",
+                      "author": { "role": "assistant" },
+                      "content": { "content_type": "text", "parts": ["Hello!"] },
+                      "create_time": 1700000005
+                    },
+                    "parent": "child-1",
+                    "children": []
+                  }
+                },
+                "conversation_id": "html-conv-1"
+              }];
+            </script>
+          </body>
+        </html>
+      `;
+
+      const result = await chatCapture.parseFileAuto(htmlExport);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toHaveLength(1);
+        expect(result.value[0].provider).toBe('openai');
+        expect(result.value[0].external_id).toBe('html-conv-1');
+        expect(result.value[0].title).toBe('HTML Chat');
+        expect(result.value[0].messages.map(m => m.content)).toEqual([
+          'Hi from HTML',
+          'Hello!'
+        ]);
+      }
+    });
+
+    it('should parse ChatGPT HTML export with assetsJson using auto-detect', async () => {
+      const htmlExport = `
+        <!doctype html>
+        <html>
+          <body>
+            <script>
+              // Some comment noise
+              let jsonData = [{
+                "title": "HTML Auto Assets",
+                "mapping": {
+                  "root": { "id": "root", "message": null, "parent": null, "children": ["c1"] },
+                  "c1": {
+                    "id": "c1",
+                    "message": { "id": "m1", "author": { "role": "assistant" }, "content": { "parts": ["Auto assets"] }, "create_time": 1 },
+                    "parent": "root",
+                    "children": []
+                  }
+                },
+                "conversation_id": "html-auto-assets"
+              }];
+              var assetsJson = {};
+            </script>
+          </body>
+        </html>
+      `;
+
+      const result = await chatCapture.parseFileAuto(htmlExport);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value[0].external_id).toBe('html-auto-assets');
+        expect(result.value[0].messages[0].content).toBe('Auto assets');
       }
     });
   });

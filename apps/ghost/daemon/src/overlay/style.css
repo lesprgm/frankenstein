@@ -262,10 +262,11 @@ body {
 /* Toast notifications */
 .toast {
     position: fixed;
-    right: 16px;
-    top: 16px;
-    min-width: 220px;
-    max-width: 280px;
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    min-width: 0;
+    max-width: calc(100% - 24px);
     padding: 12px 14px;
     background: rgba(25, 27, 34, 0.92);
     color: #f8fafc;

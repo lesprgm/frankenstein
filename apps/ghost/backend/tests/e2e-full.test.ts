@@ -109,7 +109,7 @@ describe('Ghost Backend Full E2E (with Context Engine)', () => {
                 path: filePath,
             },
         });
-        expect(body.assistant_text).toContain('Opening project-plan.md');
+        expect(body.assistant_text.toLowerCase()).toContain('opening the file');
     });
 
     it('should use LRU cache for repeated queries', async () => {

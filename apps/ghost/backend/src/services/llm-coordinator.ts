@@ -42,6 +42,15 @@ export class LLMCoordinator {
       return this.forceRecallAssistantText({ ...fb, assistant_text: cleaned });
     }
 
+    // Special case: Reminder query with no memories
+    const isReminderQuery = /what.*(working|bug|reminder|yesterday|task)/i.test(commandText);
+    if (isReminderQuery && memories.length === 0) {
+      return {
+        assistant_text: "I don't see any reminders yet. Want me to create one?",
+        actions: []
+      };
+    }
+
     try {
       const payload = this.buildGeminiPayload(commandText, context, memories, screenContext);
 
@@ -195,6 +204,7 @@ export class LLMCoordinator {
       '7. CONTEXT AWARENESS: If "Screen Context" is provided, use it to answer questions about "this" or "what I\'m looking at".',
       '8. IGNORE CHATTER: Ignore "fact.command" and "fact.response" (past queries). Focus on "doc.chunk", "entity.file", "fact", or "doc" memories - these contain actual document content.',
       '9. DOCUMENT CONTENT: "doc.chunk" memories contain ACTUAL TEXT from documents. Use this text to answer questions directly. The filename prefix tells you which document it came from.',
+      '10. SCROLL TO CONTEXT: If the user asks to "scroll to" or "show me" a specific part, use "file.open" with the "search" parameter. The "search" value MUST be a unique 5-10 word EXACT QUOTE from the "doc.chunk" memory text.',
       '',
       'EXAMPLE:',
       'User: "What did Sarah say about the API redesign?"',
@@ -202,6 +212,9 @@ export class LLMCoordinator {
       'WRONG: "The user was inquiring about an API redesign discussion."',
       'WRONG: "I found information about Sarah and the API redesign."',
       'CORRECT: { "assistant_text": "Sarah expressed general support but flagged a timeline concern. She needs the API endpoints stable by April 1st for the iOS Q2 release.", "actions": [{ "type": "info.recall", "params": { "summary": "Sarah expressed general support but flagged a timeline concern. She needs the API endpoints stable by April 1st for the iOS Q2 release." }}] }',
+      '',
+      'User: "Show me where she said that"',
+      'CORRECT: { "assistant_text": "Opening the meeting notes to that section.", "actions": [{ "type": "file.open", "params": { "path": "API_Redesign_Meeting_Notes_2024-03-10.txt", "search": "flagged a timeline concern" }}] }',
       '',
       'User command:',
       '',

@@ -6,15 +6,16 @@ const axiosMock = vi.hoisted(() => ({
 
 vi.mock('axios', () => {
   const { get } = axiosMock;
+  const client = { get, defaults: { baseURL: '' } };
   return {
     __esModule: true,
-    default: { create: vi.fn(() => ({ get })) },
-    create: vi.fn(() => ({ get })),
+    default: { create: vi.fn(() => client) },
+    create: vi.fn(() => client),
   };
 });
 
 // Import after mocks to ensure axios.create is stubbed
-import { fetchDashboardData } from '../src/api';
+import { fetchDashboardData, streamLatestCommand } from '../src/api';
 
 describe('fetchDashboardData', () => {
   it('requests dashboard data with limit parameter', async () => {
@@ -45,11 +46,19 @@ describe('fetchDashboardData', () => {
 
     it('connects to EventSource and handles messages', () => {
       const mockEventSource = {
-        onmessage: null as any,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
         onerror: null as any,
         close: vi.fn(),
       };
       (global.EventSource as any).mockImplementation(() => mockEventSource);
+
+        let tokenHandler: any;
+        let finalHandler: any;
+        mockEventSource.addEventListener.mockImplementation((event, handler) => {
+          if (event === 'token') tokenHandler = handler;
+          if (event === 'final') finalHandler = handler;
+        });
 
       const callbacks = {
         onToken: vi.fn(),
@@ -57,18 +66,17 @@ describe('fetchDashboardData', () => {
         onError: vi.fn(),
       };
 
-      const { streamLatestCommand } = require('../src/api');
       const close = streamLatestCommand(callbacks);
 
-      expect(global.EventSource).toHaveBeenCalledWith('/api/command/stream/latest');
+      expect(global.EventSource).toHaveBeenCalledWith('/api/dashboard/stream-latest?apiKey=ghost-api-key-123');
 
       // Simulate token event
-      mockEventSource.onmessage({ data: JSON.stringify({ type: 'token', content: 'Hello' }) });
+      tokenHandler({ data: JSON.stringify({ text: 'Hello' }) });
       expect(callbacks.onToken).toHaveBeenCalledWith('Hello');
 
       // Simulate final event
       const mockCommand = { id: '123', text: 'Hi' };
-      mockEventSource.onmessage({ data: JSON.stringify({ type: 'final', content: mockCommand }) });
+      finalHandler({ data: JSON.stringify({ command: mockCommand }) });
       expect(callbacks.onFinal).toHaveBeenCalledWith(mockCommand);
 
       // Cleanup
@@ -78,11 +86,14 @@ describe('fetchDashboardData', () => {
 
     it('handles connection errors', () => {
       const mockEventSource = {
-        onmessage: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
         onerror: null as any,
         close: vi.fn(),
       };
       (global.EventSource as any).mockImplementation(() => mockEventSource);
+
+      mockEventSource.addEventListener.mockImplementation(() => {});
 
       const callbacks = {
         onToken: vi.fn(),
@@ -90,7 +101,6 @@ describe('fetchDashboardData', () => {
         onError: vi.fn(),
       };
 
-      const { streamLatestCommand } = require('../src/api');
       streamLatestCommand(callbacks);
 
       // Simulate error

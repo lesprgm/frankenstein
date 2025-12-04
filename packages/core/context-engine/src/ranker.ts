@@ -27,8 +27,8 @@ export class MemoryRanker {
     }
 
     const {
-      similarityWeight = 0.4,
-      recencyWeight = 0.2,
+      similarityWeight = 0.5,
+      recencyWeight = 0.3,
       confidenceWeight = 0.2,
       decayWeight = 0.2,
     } = options;

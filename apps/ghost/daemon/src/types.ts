@@ -98,6 +98,12 @@ export interface MemoryReference {
   metadata?: Record<string, any>;
 }
 
+export interface ScreenContext {
+  text: string;
+  screenshotPath: string;
+  windowTitle?: string;
+}
+
 export interface FileMetadata {
   path: string;
   name: string;

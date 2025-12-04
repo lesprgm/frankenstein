@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { computeFileFingerprint } from '../utils/file-fingerprint.js';
 import type {
   Action,
   ActionResult,
@@ -208,6 +209,7 @@ export class InMemoryStorage {
    * Build a memory object for a file index entry
    */
   private buildFileMemory(file: FileMetadata, userId: string): MemoryReference {
+    const fingerprint = computeFileFingerprint(file.path, file.size, file.modified);
     return {
       id: `file-${crypto.createHash('md5').update(file.path).digest('hex')}`,
       type: 'entity.file',
@@ -219,6 +221,7 @@ export class InMemoryStorage {
         modified: file.modified,
         size: file.size,
         userId,
+        fingerprint,
       },
     };
   }
@@ -288,4 +291,3 @@ import { SQLiteStorage } from './sqlite-storage.js';
 
 const DATABASE_PATH = process.env.DATABASE_PATH || './ghost.db';
 export const storageService = new SQLiteStorage(DATABASE_PATH);
-

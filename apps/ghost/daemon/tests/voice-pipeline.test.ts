@@ -43,8 +43,9 @@ describe('VoicePipeline', () => {
 
             const result = await promise;
             expect(result.toString()).toBe('audio');
+            // Silence threshold is now 0.8 (increased to avoid background noise)
             expect(recordModule.record).toHaveBeenCalledWith(expect.objectContaining({
-                silence: '0.5'
+                silence: '0.8'
             }));
         });
 

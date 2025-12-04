@@ -1,13 +1,16 @@
-import { execFile } from 'node:child_process';
-import { Notification } from 'electron';
+import { execFile, exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Action, ActionResult, MemoryReference } from '../types';
+
+const execAsync = promisify(exec);
+import type { Action, ActionResult, MemoryReference, ScreenContext } from '../types';
 import type { VoiceFeedbackService } from '../services/voice-feedback';
 import { ExplainabilityNotifier } from '../services/explainability-notifier';
 import { RemindersService } from '../services/reminders';
 import { GhostAPIClient } from '../services/api-client';
 import { fileScanner } from '../files/file-scanner';
+import { showOverlayToast } from '../services/overlay-notifier';
 
 /**
  * Executes actions returned by the backend.
@@ -23,8 +26,21 @@ export class ActionExecutor {
 
   async execute(
     action: Action,
-    context?: { commandId: string; memories: MemoryReference[] }
+    context?: { commandId: string; memories: MemoryReference[]; screenContext?: { text: string; screenshotPath: string } }
   ): Promise<ActionResult> {
+    // Provide instant acknowledgment to reduce perceived latency
+    if (this.voiceFeedback) {
+      const ack = this.voiceFeedback.getAcknowledgment(action);
+      if (ack) {
+        // Don't await - let it speak in background while we work
+        this.voiceFeedback.provideFeedback(action, {
+          action,
+          status: 'success',
+          executedAt: new Date().toISOString(),
+        }).catch(() => { }); // Suppress errors for acknowledgment
+      }
+    }
+
     let result: ActionResult;
 
     switch (action.type) {
@@ -38,10 +54,11 @@ export class ActionExecutor {
         result = await this.indexFile(action);
         break;
       case 'info.recall':
-        result = await this.recallInfo(action);
+      case 'info.summarize': // Handle LLM variation
+        result = await this.recallInfo(action, context);
         break;
       case 'reminder.create':
-        result = await this.createReminder(action);
+        result = await this.createReminder(action, context);
         break;
       case 'search.query':
         result = await this.searchMemories(action);
@@ -71,22 +88,31 @@ export class ActionExecutor {
         summary: ExplainabilityNotifier.generateSummary(context.memories),
         memoryCount: context.memories.length,
         primarySource: context.memories[0]?.metadata?.source,
+        memories: context.memories,
       }).catch(err => console.error('[Ghost] Notification failed:', err));
     }
 
     // Provide voice feedback if available
+    // Provide voice feedback if available
+    // BUT skip it if we are in a conversational flow (which main.ts handles via assistant_text)
+    // Actually, main.ts handles assistant_text, but action executor handles action feedback.
+    // We want to avoid double speaking.
+    // Ideally, we only speak here if there was NO assistant_text, or if the action is async/long-running.
+    // For now, let's disable generic action feedback to fix the echo, as the LLM usually confirms the action.
+    /*
     if (this.voiceFeedback) {
       await this.voiceFeedback.provideFeedback(action, result).catch((err) =>
         console.error('[Ghost][ActionExecutor] Voice feedback failed:', err)
       );
     }
+    */
 
     return result;
   }
 
   async executeBatch(
     actions: Action[],
-    context?: { commandId: string; memories: MemoryReference[] }
+    context?: { commandId: string; memories: MemoryReference[]; screenContext?: { text: string; screenshotPath: string } }
   ): Promise<ActionResult[]> {
     const results: ActionResult[] = [];
     for (const action of actions) {
@@ -107,11 +133,47 @@ export class ActionExecutor {
       return { action, status: 'failed', error: 'Invalid file path', executedAt };
     }
     const normalized = path.normalize(resolvedPath);
+
+    // Security: Prevent path traversal attempts
     if (normalized.includes('..')) {
       return { action, status: 'failed', error: 'Path traversal detected', executedAt };
     }
-    if (!fs.existsSync(normalized)) {
-      return { action, status: 'failed', error: 'File not found', executedAt };
+
+    const home = process.env.HOME || '';
+    const isAllowedPath = (p: string) =>
+      p.startsWith(home) || p.startsWith('/tmp') || p.startsWith('/private/tmp');
+
+    let finalPath = normalized;
+    let usedSpotlight = false;
+
+    if (!fs.existsSync(finalPath)) {
+      // Hackathon Fallback: Try to find the file via Spotlight if it doesn't exist directly
+      // This handles cases where the LLM guesses the path or only has the filename
+      console.log(`[Ghost][OpenFile] Path not found: ${finalPath}. Trying Spotlight...`);
+      const basename = path.basename(finalPath);
+
+      try {
+        // mdfind -name "filename" | head -n 1
+        const { stdout } = await execAsync(`mdfind -name "${basename}" | head -n 1`);
+        const spotlightPath = stdout.trim();
+
+        if (spotlightPath && fs.existsSync(spotlightPath)) {
+          console.log(`[Ghost][OpenFile] Spotlight found: ${spotlightPath}`);
+          finalPath = spotlightPath;
+          usedSpotlight = true;
+        }
+      } catch (err) {
+        console.warn('[Ghost][OpenFile] Spotlight search failed:', err);
+      }
+
+      if (!fs.existsSync(finalPath)) {
+        return { action, status: 'failed', error: 'File not found', executedAt };
+      }
+    }
+
+    // Enforce home/tmp boundaries for direct paths; allow Spotlight results to bypass if needed
+    if (!usedSpotlight && !isAllowedPath(finalPath)) {
+      return { action, status: 'failed', error: 'Path traversal detected: Access denied outside home directory', executedAt };
     }
 
     const opener = process.platform === 'darwin'
@@ -120,12 +182,36 @@ export class ActionExecutor {
         ? 'start'
         : 'xdg-open';
 
+    const search = action.params.search as string | undefined;
+
     return new Promise<ActionResult>((resolve) => {
-      execFile(opener, [normalized], (error) => {
+      execFile(opener, [finalPath], (error) => {
         if (error) {
           resolve({ action, status: 'failed', error: error.message, executedAt });
           return;
         }
+
+        // If search param is present, use AppleScript to Find in Page (macOS only)
+        if (search && process.platform === 'darwin') {
+          // Wait a moment for the app to focus
+          setTimeout(() => {
+            const script = `
+              tell application "System Events"
+                keystroke "f" using command down
+                delay 0.2
+                keystroke "${search.replace(/"/g, '\\"')}"
+                delay 0.2
+                keystroke return
+                delay 0.2
+                keystroke escape -- Close find bar but keep selection
+              end tell
+            `;
+            execFile('osascript', ['-e', script], (err) => {
+              if (err) console.warn('[Ghost][OpenFile] Search script failed:', err);
+            });
+          }, 1000); // 1s delay to ensure file is open
+        }
+
         resolve({ action, status: 'success', executedAt });
       });
     });
@@ -175,22 +261,32 @@ export class ActionExecutor {
   private async scroll(action: Action): Promise<ActionResult> {
     const executedAt = new Date().toISOString();
     const direction = (action.params.direction as string) || 'down';
-    const amount = Number(action.params.amount ?? 3);
+    const amount = Math.max(1, Math.round(Number(action.params.amount ?? 1)));
 
     if (process.platform !== 'darwin') {
       return { action, status: 'failed', error: 'Scrolling only supported on macOS in this build', executedAt };
     }
 
-    const keyCode = direction === 'up' ? 126 : 125; // 126=up, 125=down
-    const script = `tell application "System Events"\nrepeat ${Math.max(1, amount)} times\nkey code ${keyCode}\ndelay 0.05\nend repeat\nend tell`;
+    // Safety: break big scrolls into a limited number of page-step pulses
+    const keyCode = direction === 'up' ? 116 : 121; // 116=Page Up, 121=Page Down
+    const MAX_STEPS = 30; // tighter cap to avoid runaway scroll that can lock input
+    const STEP_SIZE = 800; // pixels per "page" equivalent
+    const STEP_DELAY = 0.08; // slightly slower to accommodate heavy viewers/PDFs
+    const steps = Math.min(MAX_STEPS, Math.max(1, Math.ceil(amount / STEP_SIZE)));
+    const script = `tell application "System Events"\nrepeat ${steps} times\nkey code ${keyCode}\ndelay ${STEP_DELAY}\nend repeat\nend tell`;
 
     return new Promise<ActionResult>((resolve) => {
-      execFile('osascript', ['-e', script], (error) => {
+      const child = execFile('osascript', ['-e', script], { timeout: 4000 }, (error) => {
         if (error) {
           resolve({ action, status: 'failed', error: error.message, executedAt });
           return;
         }
         resolve({ action, status: 'success', executedAt });
+      });
+
+      // Extra safety: kill the script if it hangs beyond timeout (execFile will also enforce timeout)
+      child.on('error', (err) => {
+        resolve({ action, status: 'failed', error: err.message, executedAt });
       });
     });
   }
@@ -219,7 +315,7 @@ export class ActionExecutor {
       // or maybe we can filter?
       // For simplicity, let's scan the directory.
 
-      new Notification({ title: 'Ghost', body: `Scanning ${resolvedPath}...` }).show();
+      showOverlayToast('Ghost', `Scanning ${resolvedPath}...`);
 
       const files = await fileScanner.scan(scanDirs, {
         forceRescan: true,
@@ -236,7 +332,7 @@ export class ActionExecutor {
         throw new Error((result as any).error?.message || 'Failed to index files');
       }
 
-      new Notification({ title: 'Ghost', body: `Indexed ${files.length} files from ${path.basename(resolvedPath)}` }).show();
+      showOverlayToast('Ghost', `Indexed ${files.length} files from ${path.basename(resolvedPath)}`);
       return { action, status: 'success', executedAt };
 
     } catch (error) {
@@ -249,31 +345,143 @@ export class ActionExecutor {
     }
   }
 
-  private async recallInfo(action: Action): Promise<ActionResult> {
+  private async recallInfo(action: Action, context?: { commandId: string; memories: MemoryReference[]; screenContext?: ScreenContext }): Promise<ActionResult> {
     const executedAt = new Date().toISOString();
     const summary = action.params.summary as string;
-    // We keep this notification as it displays the ANSWER/SUMMARY
-    // The explainability notification will display the SOURCE
-    new Notification({ title: 'Ghost', body: summary || 'No summary provided' }).show();
+
+    // Demo mode: Check if any of the recalled memories is a reminder
+    if (context?.memories) {
+      const reminderMemories = context.memories.filter(m => m.type === 'reminder');
+
+      if (reminderMemories.length > 0) {
+        // Found reminder(s)! Extract file path and screenshot from metadata
+        for (const reminder of reminderMemories) {
+          const metadata = reminder.metadata || {};
+          const screenshot = metadata.screenshot;
+          const fileContext = metadata.context || '';
+          const windowTitle = metadata.windowTitle;
+
+          // Primary: Use windowTitle if available (most reliable)
+          // Fallback: Extract from OCR context
+          let filePath: string | null = null;
+
+          if (windowTitle) {
+            // If windowTitle looks like a filename, use it directly
+            if (windowTitle.includes('.')) {
+              filePath = windowTitle;
+              console.log('[Ghost][Recall] Using windowTitle as file path:', filePath);
+            }
+          }
+
+          // Fallback to OCR parsing
+          if (!filePath && fileContext) {
+            const filePathMatch = fileContext.match(/(?:Active file|File|Path):\s*([^\s\n]+)/i);
+            filePath = filePathMatch ? filePathMatch[1] : null;
+            if (filePath) {
+              console.log('[Ghost][Recall] Extracted file path from context:', filePath);
+            }
+          }
+
+          // Enhanced summary with screenshot reference
+          let enhancedSummary = summary;
+          if (screenshot) {
+            enhancedSummary += `\n\nScreenshot: ${screenshot}`;
+          }
+
+          // Auto-open file if available (demo mode)
+          if (filePath) {
+            console.log('[Ghost][Recall] Auto-opening file from reminder:', filePath);
+            await this.openFile({
+              type: 'file.open',
+              params: { path: filePath }
+            });
+            enhancedSummary += `\n\nOpening: ${path.basename(filePath)}`;
+          }
+
+          showOverlayToast('Ghost', enhancedSummary);
+          return { action, status: 'success', executedAt };
+        }
+      }
+    }
+
+    // Normal recall (no reminder)
+    showOverlayToast('Ghost', summary || 'No summary provided');
     return { action, status: 'success', executedAt };
   }
 
-  private async createReminder(action: Action): Promise<ActionResult> {
+
+  private async createReminder(action: Action, context?: { commandId: string; memories: MemoryReference[]; screenContext?: ScreenContext }): Promise<ActionResult> {
     const executedAt = new Date().toISOString();
-    if (!this.remindersService) {
-      return { action, status: 'failed', error: 'Reminders service not available', executedAt };
-    }
-
     const { title, notes, dueDate } = action.params;
-    const result = await this.remindersService.createReminder({ title, notes, dueDate });
 
-    if (result.success) {
-      new Notification({ title: 'Ghost', body: `Reminder created: ${title}` }).show();
-      return { action, status: 'success', executedAt };
-    } else {
-      return { action, status: 'failed', error: result.error, executedAt };
+    // Validate title
+    if (!title || typeof title !== 'string' || title.trim().length === 0) {
+      return { action, status: 'failed', error: 'Reminder title is required', executedAt };
     }
+
+    // Enhanced notes with screen context for demo mode
+    let enrichedNotes = notes || '';
+    if (context?.screenContext) {
+      enrichedNotes += `\n\nContext: ${context.screenContext.text.slice(0, 200)}`;
+      enrichedNotes += `\nScreenshot: ${context.screenContext.screenshotPath}`;
+    }
+
+    // macOS-only: create reminder via AppleScript to avoid missing Swift helper
+    if (process.platform === 'darwin') {
+      const esc = (s: string) => s.replace(/"/g, '\\"');
+      const dueLine = dueDate ? `set due date of newReminder to date "${esc(dueDate)}"` : '';
+      const noteLine = enrichedNotes ? `set body of newReminder to "${esc(enrichedNotes)}"` : '';
+      const script = `
+        tell application "Reminders"
+          set newReminder to make new reminder with properties {name:"${esc(title.trim())}"}
+          ${dueLine}
+          ${noteLine}
+        end tell
+      `;
+
+      const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
+        execFile('osascript', ['-e', script], { timeout: 5000 }, (error) => {
+          if (error) {
+            resolve({ success: false, error: error.message });
+          } else {
+            resolve({ success: true });
+          }
+        });
+      });
+
+      if (!result.success) {
+        return { action, status: 'failed', error: result.error || 'Failed to create reminder', executedAt };
+      }
+    } else {
+      return { action, status: 'failed', error: 'Reminders are only supported on macOS in this build', executedAt };
+    }
+
+    // ALSO store as a Ghost memory for searchability (demo mode)
+    const hadScreenContextProp = !!context && Object.prototype.hasOwnProperty.call(context, 'screenContext');
+    if (this.apiClient && (context?.screenContext || hadScreenContextProp)) {
+      try {
+        await this.apiClient.createMemory({
+          type: 'reminder',
+          summary: `Reminder: ${title}. ${notes || ''}`,
+          metadata: {
+            screenshot: context?.screenContext?.screenshotPath,
+            context: context?.screenContext?.text,
+            windowTitle: (context?.screenContext as any)?.windowTitle,
+            dueDate: dueDate || executedAt,
+            completed: false
+          }
+        });
+        console.log('[Ghost][Reminder] Stored as searchable memory');
+      } catch (err) {
+        console.error('[Ghost][Reminder] Failed to store as memory:', err);
+        // Don't fail the whole reminder if memory storage fails
+      }
+    }
+
+    showOverlayToast('Ghost', `Reminder created: ${title}`);
+    return { action, status: 'success', executedAt };
   }
+
 
   private async searchMemories(action: Action): Promise<ActionResult> {
     const executedAt = new Date().toISOString();
@@ -296,16 +504,10 @@ export class ActionExecutor {
       const results = data.results || [];
 
       if (results.length === 0) {
-        new Notification({
-          title: 'Ghost Search',
-          body: `No results found for "${query}"`
-        }).show();
+        showOverlayToast('Ghost Search', `No results found for "${query}"`);
       } else {
         const topResults = results.slice(0, 3).map((r: any) => r.memory.summary).join('\n• ');
-        new Notification({
-          title: `Found ${results.length} results`,
-          body: `• ${topResults}`
-        }).show();
+        showOverlayToast(`Found ${results.length} results`, `• ${topResults}`);
       }
 
       return { action, status: 'success', executedAt };

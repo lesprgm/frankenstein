@@ -6,12 +6,12 @@ const mockFetch = vi.hoisted(() => ({
   fetchDashboardData: vi.fn(),
 }));
 
-vi.mock('../../src/api', () => {
-  return {
-    __esModule: true,
-    fetchDashboardData: mockFetch.fetchDashboardData,
-  };
-});
+vi.mock('../../src/api', () => ({
+  __esModule: true,
+  fetchDashboardData: mockFetch.fetchDashboardData,
+  streamLatestCommand: vi.fn(() => () => { }),
+  activateGhost: vi.fn(),
+}));
 
 import { App } from '../../src/App';
 
@@ -71,8 +71,7 @@ describe('App', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/offline/i)).toBeInTheDocument();
+      expect(screen.getByText(/Failed to connect to Ghost/i)).toBeInTheDocument();
     });
   });
 });
-

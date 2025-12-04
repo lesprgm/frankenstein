@@ -183,6 +183,267 @@ export class CommandProcessor extends EventEmitter {
       console.warn('[Ghost][CommandProcessor] Failed to log memories', err);
     }
 
+    const lowerText = request.text.toLowerCase();
+
+    // If reminder intent detected, synthesize a concise reminder title/notes from context
+    const wantsReminder = /\b(remind me|reminder|set a reminder|remember to)\b/.test(lowerText);
+    let reminderHints: { title?: string; notes?: string } | undefined;
+    if (wantsReminder) {
+      const bestFile = memories.find((m) => m.metadata?.path);
+      const baseTitle = bestFile?.metadata?.name || bestFile?.summary || request.text;
+      const sanitizedTitle = (baseTitle || 'Reminder').replace(/\s+/g, ' ').trim();
+      const title = sanitizedTitle.length > 80 ? `${sanitizedTitle.slice(0, 77)}...` : sanitizedTitle;
+
+      const keyFacts = memories
+        .filter((m) => m.type?.startsWith('fact'))
+        .slice(0, 2)
+        .map((m) => m.summary?.split(':').pop()?.trim() || m.summary || '')
+        .filter(Boolean);
+      const notesParts = [];
+      if (bestFile?.metadata?.name) notesParts.push(`File: ${bestFile.metadata.name}`);
+      if (keyFacts.length > 0) notesParts.push(`Context: ${keyFacts.join(' | ')}`);
+      const notes = notesParts.join('\n').slice(0, 200);
+
+      reminderHints = { title, notes };
+    }
+
+    // Intent guard: prefer deterministic file actions over LLM when possible
+    const wantsOpen = /\b(open|view|show|display|look at|launch|navigate|go to|jump to)\b/.test(lowerText);
+    const wantsScroll = /\b(scroll|scrolling|page down|page up|to the end|bottom|top)\b/.test(lowerText);
+    const wantsSummarize = /\b(summarize|summary|what('|’)s in|whats in|contents|overview|outline|tl;dr)\b/.test(lowerText);
+    const wantsSearch = /\b(find|search for|look for|highlight)\b/.test(lowerText);
+    const wantsFileAction = wantsOpen || wantsScroll || wantsSummarize || wantsSearch;
+    const wantsFileRecall =
+      /\b(remind(er)?|which file|what file|which doc|what doc|what paper|supposed to read|finish reading|reminded you)\b/.test(
+        lowerText
+      );
+    const directionHint =
+      /\b(up|top|start|beginning|page up)\b/.test(lowerText) || request.scroll_direction === 'up'
+        ? 'up'
+        : 'down';
+
+    if (wantsFileAction) {
+      let fileMemories = memories.filter(
+        (m) =>
+          m &&
+          m.metadata &&
+          typeof m.metadata.path === 'string' &&
+          m.metadata.path.length > 0
+      );
+
+      // Deduplicate by path, keep the highest score per path
+      const byPath = new Map<string, any>();
+      for (const f of fileMemories) {
+        const key = f.metadata.path.toLowerCase();
+        const existing = byPath.get(key);
+        if (!existing || (f.score ?? 0) > (existing.score ?? 0)) {
+          byPath.set(key, f);
+        }
+      }
+      fileMemories = Array.from(byPath.values());
+
+      // If none/ambiguous, try to find a file by name/path from storage
+      if ((fileMemories.length === 0 || fileMemories.length > 1) && typeof (this.storageService as any).findFileByNameOrPath === 'function') {
+        try {
+          const matches = await (this.storageService as any).findFileByNameOrPath(request.text, request.user_id, 3);
+          if (Array.isArray(matches) && matches.length > 0) {
+            fileMemories = matches;
+            memories = [...memories, ...matches];
+          }
+        } catch (err) {
+          console.warn('[Ghost][CommandProcessor] findFileByNameOrPath failed', err);
+        }
+      }
+
+      // If we have multiple close matches, prompt disambiguation instead of guessing
+      if (fileMemories.length > 1) {
+        const sorted = [...fileMemories].sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+        const top = sorted[0];
+        const second = sorted[1];
+        const closeScores = (top?.score ?? 0) - (second?.score ?? 0) < 0.05;
+        if (closeScores) {
+          const options = sorted.slice(0, 3).map((m: any, idx: number) => {
+            const name = m.metadata?.name || m.metadata?.path || `Option ${idx + 1}`;
+            return `${idx + 1}) ${name}`;
+          });
+          const response: CommandResponse = {
+            command_id: request.command_id,
+            assistant_text: `I found multiple matching files. Which one should I use?\n${options.join('\n')}`,
+            actions: [],
+            memories_used: sorted.slice(0, 3),
+          };
+          const saved = await this.storageService.saveCommand(request, response, response.memories_used);
+          if (!saved.ok) {
+            return { ok: false, error: { type: 'storage_error', message: saved.error.message } };
+          }
+          this.memoryService.extractFromConversation(request, response).catch((error) => {
+            console.warn('Memory extraction failed:', error);
+          });
+          this.emit('command_processed', response);
+          return { ok: true, value: response };
+        }
+      }
+
+      // Scroll requires an active window/file context; bail early if none
+      if (wantsScroll && !request.active_path && fileMemories.length === 0) {
+        const response: CommandResponse = {
+          command_id: request.command_id,
+          assistant_text: 'I need an active file/window to scroll. Please focus the file first or tell me which one.',
+          actions: [],
+          memories_used: [],
+        };
+        const saved = await this.storageService.saveCommand(request, response, []);
+        if (!saved.ok) {
+          return { ok: false, error: { type: 'storage_error', message: saved.error.message } };
+        }
+        this.emit('command_processed', response);
+        return { ok: true, value: response };
+      }
+
+      // If we have at least one file path, pick best match and bypass LLM
+      if (fileMemories.length >= 1) {
+        const sorted = [...fileMemories].sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+        const file = sorted[0];
+        const actions = [];
+        const activePath = request.active_path;
+        const activeMatches =
+          activePath &&
+          file?.metadata?.path &&
+          file.metadata.path.toLowerCase() === activePath.toLowerCase();
+
+        // If the client reports we are already near the end, avoid redundant scrolling.
+        const nearEnd =
+          wantsScroll &&
+          directionHint === 'down' &&
+          typeof request.scroll_progress === 'number' &&
+          request.scroll_progress >= 0.95 &&
+          activeMatches;
+
+        // Summarize / search-in-file intent
+        if (wantsSummarize || wantsSearch) {
+          actions.push({
+            type: 'info.summarize',
+            params: {
+              topic: wantsSearch ? `Find: ${request.text}` : `Summary: ${request.text}`,
+              sources: [file?.metadata?.path].filter(Boolean) as string[],
+              format: 'brief',
+            },
+          });
+        } else if (wantsOpen || (!activeMatches && !wantsScroll) || !file) {
+          actions.push({
+            type: 'file.open',
+            params: {
+              path: file?.metadata?.path,
+            },
+          });
+        }
+
+        // For scroll intents, if we already have a file match, just scroll it; avoid reopening.
+        if (wantsScroll && !nearEnd) {
+          actions.push({
+            type: 'file.scroll',
+            params: {
+              direction: directionHint,
+              amount: 5000, // capped to avoid runaway scroll; daemon applies its own safety limits
+            },
+          });
+        }
+
+        if (actions.length === 0) {
+          // Should not happen, fallback to LLM path
+        } else {
+          const response: CommandResponse = {
+            command_id: request.command_id,
+            assistant_text: nearEnd
+              ? `You're already near the end of the file, so I won't scroll further.`
+              : wantsSummarize || wantsSearch
+                ? `Working on ${wantsSearch ? 'finding that in' : 'summarizing'} the file.`
+                : wantsScroll
+                  ? `Scrolling ${directionHint} in the file.`
+                  : `Opening the file.`,
+            actions,
+            memories_used: [file],
+          };
+
+          const saved = await this.storageService.saveCommand(request, response, [file]);
+          if (!saved.ok) {
+            return { ok: false, error: { type: 'storage_error', message: saved.error.message } };
+          }
+
+          this.memoryService.extractFromConversation(request, response).catch((error) => {
+            console.warn('Memory extraction failed:', error);
+          });
+
+          this.emit('command_processed', response);
+          return { ok: true, value: response };
+        }
+      }
+    }
+
+    // If user is asking about "what file/paper" and we have a strong single match, offer to open it without acting
+    if (!wantsFileAction && wantsFileRecall) {
+      let fileMemories = memories.filter(
+        (m) =>
+          m &&
+          m.metadata &&
+          typeof m.metadata.path === 'string' &&
+          m.metadata.path.length > 0
+      );
+
+      if (fileMemories.length === 0 && typeof (this.storageService as any).findFileByNameOrPath === 'function') {
+        try {
+          const matches = await (this.storageService as any).findFileByNameOrPath(request.text, request.user_id, 1);
+          if (Array.isArray(matches) && matches.length > 0) {
+            fileMemories = matches;
+            memories = [...memories, ...matches];
+          }
+        } catch (err) {
+          console.warn('[Ghost][CommandProcessor] findFileByNameOrPath failed (recall)', err);
+        }
+      }
+
+      // Deduplicate by path
+      const byPath = new Map<string, any>();
+      for (const f of fileMemories) {
+        const key = f.metadata.path.toLowerCase();
+        const existing = byPath.get(key);
+        if (!existing || (f.score ?? 0) > (existing.score ?? 0)) {
+          byPath.set(key, f);
+        }
+      }
+      fileMemories = Array.from(byPath.values());
+
+      if (fileMemories.length === 1 && (fileMemories[0].score ?? 0) >= 0.4) {
+        const file = fileMemories[0];
+        const response: CommandResponse = {
+          command_id: request.command_id,
+          assistant_text: 'I found a file that matches. Want me to open it?',
+          actions: [
+            {
+              type: 'info.recall',
+              params: {
+                summary: `Matched file: ${file?.metadata?.name || file?.metadata?.path || 'file'}. Say "open the file" to open it.`,
+                confidence: file?.score ?? 0.4,
+              },
+            },
+          ],
+          memories_used: [file],
+        };
+
+        const saved = await this.storageService.saveCommand(request, response, [file]);
+        if (!saved.ok) {
+          return { ok: false, error: { type: 'storage_error', message: saved.error.message } };
+        }
+
+        this.memoryService.extractFromConversation(request, response).catch((error) => {
+          console.warn('Memory extraction failed:', error);
+        });
+
+        this.emit('command_processed', response);
+        return { ok: true, value: response };
+      }
+    }
+
     // If nothing came back from context-engine, fall back to recent indexed files
     if (memories.length === 0 && typeof (this.storageService as any).getRecentFiles === 'function') {
       const fallback = (this.storageService as any).getRecentFiles(request.user_id, 6);

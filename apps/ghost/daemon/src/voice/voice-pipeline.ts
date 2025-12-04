@@ -1,5 +1,6 @@
 import * as recordModule from 'node-record-lpcm16';
-import { BrowserWindow, Notification } from 'electron';
+import { BrowserWindow } from 'electron';
+import { showOverlayToast } from '../services/overlay-notifier';
 
 /**
  * Handles microphone recording with simple silence detection.
@@ -75,7 +76,7 @@ export class VoicePipeline {
     if (this.window) {
       this.window.setTitle(body);
     }
-    new Notification({ title: 'Ghost', body }).show();
+    showOverlayToast('Ghost', body);
   }
   async recordBackground(durationMs: number = 3000): Promise<Buffer> {
     if (this.isRecording) {
@@ -107,7 +108,7 @@ export class VoicePipeline {
           verbose: false,
           recordProgram: process.platform === 'win32' ? 'sox' : 'rec',
           endOnSilence: true,
-          silence: '0.5', // Shorter silence for background listening
+          silence: '0.8', // Increased threshold to avoid recording background noise
         });
       } catch (err) {
         this.isRecording = false;
@@ -129,6 +130,7 @@ export class VoicePipeline {
       stream.on('error', (err: Error) => {
         clearTimeout(timeout);
         this.isRecording = false;
+        console.error('[VoicePipeline] Microphone error:', err);
         // Don't reject, just resolve empty to keep loop alive
         resolve(Buffer.alloc(0));
       });

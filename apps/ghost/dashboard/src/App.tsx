@@ -160,12 +160,15 @@ function DashboardHome() {
 
 import { ExplainView } from './views/ExplainView';
 
+import { OverlayGraphView } from './views/OverlayGraphView';
+
 export function App() {
   return (
     <Routes>
       <Route path="/" element={<DashboardHome />} />
       <Route path="/command/:commandId" element={<CommandDetailView />} />
       <Route path="/explain/:commandId" element={<ExplainView />} />
+      <Route path="/overlay/:commandId" element={<OverlayGraphView />} />
     </Routes>
   );
 }
