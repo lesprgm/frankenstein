@@ -30,7 +30,7 @@ export class GhostAPIClient {
     this.userId = config.user.id;
   }
 
-  async sendCommand(text: string, screenContext?: string, screenshotPath?: string): Promise<Result<CommandResponse, any>> {
+  async sendCommand(text: string, screenContext?: string, screenshotPath?: string, conversationalMode?: boolean): Promise<Result<CommandResponse, any>> {
     const payload: CommandRequest = {
       user_id: this.userId,
       command_id: crypto.randomUUID(),
@@ -38,6 +38,7 @@ export class GhostAPIClient {
       timestamp: new Date().toISOString(),
       screen_context: screenContext,
       screenshot_path: screenshotPath,
+      conversational_mode: conversationalMode,
       meta: {
         source: 'voice',
         client_version: '0.1.0',
@@ -60,7 +61,8 @@ export class GhostAPIClient {
     text: string,
     onToken?: (token: string) => void,
     screenContext?: string,
-    screenshotPath?: string
+    screenshotPath?: string,
+    conversationalMode?: boolean
   ): Promise<Result<CommandResponse, any>> {
     const payload: CommandRequest = {
       user_id: this.userId,
@@ -69,6 +71,7 @@ export class GhostAPIClient {
       timestamp: new Date().toISOString(),
       screen_context: screenContext,
       screenshot_path: screenshotPath,
+      conversational_mode: conversationalMode,
       meta: {
         source: 'voice',
         client_version: '0.1.0',
@@ -170,6 +173,25 @@ export class GhostAPIClient {
       const response = await this.client.post('/api/memories/create', payload);
       return { ok: true, value: response.data };
     } catch (error) {
+      return { ok: false, error };
+    }
+  }
+
+  /**
+   * Summarize screen context (OCR text) using the backend's LLM.
+   * 
+   * Used when creating reminders to generate an intelligent summary
+   * of what the user was looking at (code, documents, etc.)
+   * 
+   * @param text - The OCR-extracted text from the screenshot
+   * @returns A concise summary, or null if summarization fails
+   */
+  async summarizeContext(text: string): Promise<Result<string | null, any>> {
+    try {
+      const response = await this.client.post<{ summary: string | null }>('/api/summarize-context', { text });
+      return { ok: true, value: response.data.summary };
+    } catch (error) {
+      console.warn('[Ghost][APIClient] Failed to summarize context:', error);
       return { ok: false, error };
     }
   }

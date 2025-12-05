@@ -13,6 +13,7 @@ export interface CommandRequest {
   scroll_progress?: number; // optional: 0-1 estimate of how far down the active document we are
   scroll_direction?: 'up' | 'down'; // optional: direction hint from the client
   screenshot_path?: string;
+  conversational_mode?: boolean; // When true, use chat personality with history
   meta: {
     source: 'voice';
     client_version: string;

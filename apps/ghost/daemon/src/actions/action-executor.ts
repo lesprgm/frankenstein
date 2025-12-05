@@ -110,6 +110,41 @@ export class ActionExecutor {
     return result;
   }
 
+  private buildContextSummary(raw: string | undefined): string | undefined {
+    if (!raw) return undefined;
+    const text = raw.trim().replace(/\s+/g, ' ');
+    if (!text) return undefined;
+    // Grab first sentence-ish chunk up to 180 chars
+    const firstSentence = text.split(/(?<=[.!?])\s+/)[0] || text;
+    return firstSentence.slice(0, 180);
+  }
+
+  /**
+   * Generate an intelligent summary of the screen context using LLM.
+   * Falls back to simple text truncation if LLM is unavailable.
+   */
+  private async buildContextSummaryAsync(raw: string | undefined): Promise<string | undefined> {
+    if (!raw || raw.trim().length < 20) {
+      return this.buildContextSummary(raw);
+    }
+
+    // Try LLM-based summary via backend
+    if (this.apiClient) {
+      try {
+        const result = await this.apiClient.summarizeContext(raw);
+        if (result.ok && result.value) {
+          console.log('[Ghost][Reminder] LLM summary generated:', result.value.slice(0, 50) + '...');
+          return result.value;
+        }
+      } catch (error) {
+        console.warn('[Ghost][Reminder] LLM summary failed, using fallback:', error);
+      }
+    }
+
+    // Fallback to simple truncation
+    return this.buildContextSummary(raw);
+  }
+
   async executeBatch(
     actions: Action[],
     context?: { commandId: string; memories: MemoryReference[]; screenContext?: { text: string; screenshotPath: string } }
@@ -360,6 +395,7 @@ export class ActionExecutor {
           const screenshot = metadata.screenshot;
           const fileContext = metadata.context || '';
           const windowTitle = metadata.windowTitle;
+          const contextSummary = metadata.contextSummary || this.buildContextSummary(fileContext);
 
           // Primary: Use windowTitle if available (most reliable)
           // Fallback: Extract from OCR context
@@ -386,6 +422,9 @@ export class ActionExecutor {
           let enhancedSummary = summary;
           if (screenshot) {
             enhancedSummary += `\n\nScreenshot: ${screenshot}`;
+          }
+          if (contextSummary) {
+            enhancedSummary += `\n\nContext summary: ${contextSummary}`;
           }
 
           // Auto-open file if available (demo mode)
@@ -421,13 +460,28 @@ export class ActionExecutor {
 
     // Enhanced notes with screen context for demo mode
     let enrichedNotes = notes || '';
+    let contextSummary: string | undefined;
     if (context?.screenContext) {
-      enrichedNotes += `\n\nContext: ${context.screenContext.text.slice(0, 200)}`;
+      const ctxText = context.screenContext.text || '';
+      contextSummary = await this.buildContextSummaryAsync(ctxText);
+      enrichedNotes += `\n\nContext: ${ctxText.slice(0, 200)}`;
+      if (contextSummary) {
+        enrichedNotes += `\nContext summary: ${contextSummary}`;
+      }
       enrichedNotes += `\nScreenshot: ${context.screenContext.screenshotPath}`;
     }
 
-    // macOS-only: create reminder via AppleScript to avoid missing Swift helper
-    if (process.platform === 'darwin') {
+    // Create reminder via injected service when available (test-friendly), otherwise fall back to macOS AppleScript.
+    if (this.remindersService) {
+      const result = await this.remindersService.createReminder({ title: title.trim(), notes: enrichedNotes, dueDate });
+      if (!result.success) {
+        return { action, status: 'failed', error: result.error || 'Failed to create reminder', executedAt };
+      }
+    } else {
+      if (process.platform !== 'darwin') {
+        return { action, status: 'failed', error: 'Reminders are only supported on macOS in this build', executedAt };
+      }
+
       const esc = (s: string) => s.replace(/"/g, '\\"');
       const dueLine = dueDate ? `set due date of newReminder to date "${esc(dueDate)}"` : '';
       const noteLine = enrichedNotes ? `set body of newReminder to "${esc(enrichedNotes)}"` : '';
@@ -440,7 +494,7 @@ export class ActionExecutor {
       `;
 
       const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
-        execFile('osascript', ['-e', script], { timeout: 5000 }, (error) => {
+        execFile('osascript', ['-e', script], (error) => {
           if (error) {
             resolve({ success: false, error: error.message });
           } else {
@@ -452,8 +506,6 @@ export class ActionExecutor {
       if (!result.success) {
         return { action, status: 'failed', error: result.error || 'Failed to create reminder', executedAt };
       }
-    } else {
-      return { action, status: 'failed', error: 'Reminders are only supported on macOS in this build', executedAt };
     }
 
     // ALSO store as a Ghost memory for searchability (demo mode)
@@ -468,6 +520,7 @@ export class ActionExecutor {
             context: context?.screenContext?.text,
             windowTitle: (context?.screenContext as any)?.windowTitle,
             dueDate: dueDate || executedAt,
+            contextSummary,
             completed: false
           }
         });

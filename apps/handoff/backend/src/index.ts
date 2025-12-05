@@ -19,6 +19,7 @@ type Bindings = {
   VECTORIZE_ACCOUNT_ID: string
   VECTORIZE_API_TOKEN: string
   OPENAI_API_KEY: string
+  OPENROUTER_API_KEY?: string
   OPENAI_BASE_URL?: string
   OPENAI_CHAT_MODEL?: string
   OPENAI_EXTRACTION_MODEL_PERSONAL?: string
@@ -50,6 +51,10 @@ app.get('/api/health', (c) => {
 
 // Helper to get services for a request
 function getServices(c: any) {
+  const openaiApiKey = c.env.OPENAI_API_KEY || c.env.OPENROUTER_API_KEY
+  const openaiBaseUrl = c.env.OPENAI_BASE_URL || (c.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : undefined)
+  const openaiChatModel = c.env.OPENAI_CHAT_MODEL || (c.env.OPENROUTER_API_KEY ? 'google/gemini-2.5-pro' : 'gpt-4o')
+
   // In runtime, always use the real Supabase DB (no mock)
   const db = new DatabaseClient(c.env.SUPABASE_URL, c.env.SUPABASE_KEY, { mockMode: false })
   const authService = new AuthService(db, c.env.JWT_SECRET)
@@ -77,10 +82,10 @@ function getServices(c: any) {
 
   const importService = new ImportService(
     db,
-    c.env.OPENAI_API_KEY,
+    openaiApiKey,
     {
-      baseURL: c.env.OPENAI_BASE_URL,
-      chatModel: c.env.OPENAI_CHAT_MODEL,
+      baseURL: openaiBaseUrl,
+      chatModel: openaiChatModel,
       extractionModelPersonal: c.env.OPENAI_EXTRACTION_MODEL_PERSONAL,
       extractionModelTeam: c.env.OPENAI_EXTRACTION_MODEL_TEAM
     },
@@ -89,9 +94,9 @@ function getServices(c: any) {
 
   const chatService = new ChatService(
     db,
-    c.env.OPENAI_API_KEY,
-    c.env.OPENAI_BASE_URL,
-    c.env.OPENAI_CHAT_MODEL || 'gpt-4o',
+    openaiApiKey,
+    openaiBaseUrl,
+    openaiChatModel,
     embeddingService
   )
 

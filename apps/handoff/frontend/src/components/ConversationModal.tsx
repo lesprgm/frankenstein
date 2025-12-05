@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useRef } from 'react'
+import { Fragment, useState, useEffect, useRef, useMemo } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -25,7 +25,7 @@ export default function ConversationModal({ conversationIds, isOpen, onClose }: 
     const [loadingProgress, setLoadingProgress] = useState<string>('')
     const [isExporting, setIsExporting] = useState(false)
     const [searchQuery, setSearchQuery] = useState('')
-    const [shareLabel, setShareLabel] = useState('Share')
+    const [copyContextLabel, setCopyContextLabel] = useState('Copy Context')
     const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
     const messageRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
@@ -186,6 +186,62 @@ export default function ConversationModal({ conversationIds, isOpen, onClose }: 
         searchQuery === '' || msg.content.toLowerCase().includes(searchQuery.toLowerCase())
     ) || []
 
+    // Build a nuanced context block for copy
+    const contextBlock = useMemo(() => {
+        if (!conversation) return ''
+
+        const clean = (text: string) => text.replace(/\s+/g, ' ').trim()
+        const slice = (text: string, length: number) => text.length > length ? `${text.slice(0, length - 1)}…` : text
+
+        const messages = conversation.messages
+        const lastUser = [...messages].reverse().find(m => m.role === 'user')
+        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
+
+        // Focused turns, not full dump
+        const conciseTurns = messages.slice(-6).map(m => {
+            const role = m.role === 'assistant' ? 'AI' : 'User'
+            return `${role}: ${slice(clean(m.content), 160)}`
+        })
+
+        // Curate memories for nuance (top 5)
+        const curatedFacts = extractedMemories.slice(0, 5).map(mem => {
+            const confidence = mem.confidence ? `${Math.round(mem.confidence * 100)}%` : 'n/a'
+            return `- ${mem.type}: ${slice(clean(mem.content), 200)} (conf: ${confidence})`
+        })
+
+        // If no memories, pull distilled insights from last assistant replies
+        const fallbackInsights: string[] = []
+        if (curatedFacts.length === 0) {
+            const assistantMessages = messages.filter(m => m.role === 'assistant').slice(-3)
+            assistantMessages.forEach((m, idx) => {
+                fallbackInsights.push(`- Insight ${idx + 1}: ${slice(clean(m.content), 200)}`)
+            })
+        }
+
+        const taskLine = lastUser ? slice(clean(lastUser.content), 180) : 'n/a'
+        const outcomeLine = lastAssistant ? slice(clean(lastAssistant.content), 180) : null
+
+        const block: string[] = [
+            `Context for LLM — ${conversation.title}`,
+            `Task/Ask: ${taskLine}`,
+        ]
+
+        if (outcomeLine) {
+            block.push(`Latest AI: ${outcomeLine}`)
+        }
+
+        const insights = curatedFacts.length > 0 ? curatedFacts : fallbackInsights
+        if (insights.length > 0) {
+            block.push('', 'Key context (succinct):', ...insights)
+        }
+
+        if (conciseTurns.length > 0) {
+            block.push('', 'Recent turns (trimmed):', ...conciseTurns)
+        }
+
+        return block.join('\n')
+    }, [conversation, extractedMemories])
+
     return (
         <Transition appear show={isOpen} as={Fragment}>
             <Dialog as="div" className="relative z-50" onClose={onClose}>
@@ -240,34 +296,24 @@ export default function ConversationModal({ conversationIds, isOpen, onClose }: 
                                         <div className="flex items-center gap-3">
                                             <button
                                                 onClick={async () => {
-                                                    if (!conversationIds[0]) return
-                                                    const shareUrl = `${window.location.origin}/chats?id=${conversationIds[0]}`
+                                                    if (!contextBlock) return
                                                     try {
-                                                        if (navigator.share) {
-                                                            await navigator.share({
-                                                                title: conversation?.title || 'Conversation',
-                                                                url: shareUrl,
-                                                            })
-                                                            setShareLabel('Shared!')
-                                                        } else if (navigator.clipboard?.writeText) {
-                                                            await navigator.clipboard.writeText(shareUrl)
-                                                            setShareLabel('Copied!')
-                                                        } else {
-                                                            throw new Error('Sharing not supported')
-                                                        }
+                                                        await navigator.clipboard.writeText(contextBlock)
+                                                        setCopyContextLabel('Copied!')
                                                     } catch {
-                                                        setShareLabel('Copy failed')
+                                                        setCopyContextLabel('Copy failed')
                                                     } finally {
-                                                        setTimeout(() => setShareLabel('Share'), 2000)
+                                                        setTimeout(() => setCopyContextLabel('Copy Context'), 2000)
                                                     }
                                                 }}
                                                 className="btn-ios-secondary text-sm flex items-center gap-2"
                                                 disabled={!conversation}
                                             >
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 17l4 4 4-4m-4-5v9" />
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 10V5a2 2 0 00-2-2H6a2 2 0 00-2 2v11a2 2 0 002 2h3" />
                                                 </svg>
-                                                {shareLabel}
+                                                {copyContextLabel}
                                             </button>
                                             <button
                                                 onClick={handleExport}

@@ -156,6 +156,19 @@ describe('Chats (ConversationsList)', () => {
     }, { timeout: 3000 })
   })
 
+  it('orders conversations from most recent to oldest', async () => {
+    renderWithRouter(<Chats />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Conversation 1')).toBeInTheDocument()
+    }, { timeout: 3000 })
+
+    const titles = screen.getAllByText(/Test Conversation \d/)
+    // OpenAI conversations should be listed first even if older
+    expect(titles[0]).toHaveTextContent('Test Conversation 1')
+    expect(titles[1]).toHaveTextContent('Test Conversation 2')
+  })
+
   it('filters by provider', async () => {
     renderWithRouter(<Chats />)
 

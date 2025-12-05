@@ -6,6 +6,7 @@ Voice-activated AI assistant daemon that runs locally on your Mac with multi-mod
 
 ### Voice & Audio
 - **Hotkey Activation**: `Option+Space` (macOS) for instant voice commands
+- **Wake Word Detection**: Say "Hey Ghost" (or "Hi Ghost", "Hello Ghost") for hands-free activation
 - **Voice Recording**: With silence detection
 - **Speech-to-Text**: Via Gemini API
 - **Text-to-Speech**: ElevenLabs or system TTS with streaming support
@@ -92,6 +93,20 @@ await reminders.createReminder({
   dueDate: '2025-11-27T09:00:00Z'
 });
 ```
+
+### ActivationServer (`src/services/activation-server.ts`)
+HTTP server enabling external activation of the daemon (e.g. from the dashboard).
+
+- **Port**: 3847 (fixed)
+- **Endpoint**: `POST /activate`
+- **Use Case**: Triggers the wake word / hotkey logic programmatically.
+
+### IntentClassifier (`src/voice/intent-classifier.ts`)
+Regex-based intent classification for core system commands and navigation.
+
+- **Capabilities**: Detects system control (stop, pause), help requests, and navigation commands.
+- **Performance**: Zero-latency local classification before hitting the LLM.
+
 
 ## Action Types
 

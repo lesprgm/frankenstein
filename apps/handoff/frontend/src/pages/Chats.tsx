@@ -8,6 +8,8 @@ import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 import LoadingSkeleton from '../components/LoadingSkeleton'
 import ConversationModal from '../components/ConversationModal'
 
+const HIDDEN_STORAGE_PREFIX = 'handoff_hidden_conversations_'
+
 interface ConversationGroup {
   title: string
   title_normalized: string
@@ -23,6 +25,8 @@ export default function Chats() {
   const { currentWorkspace } = useWorkspace()
   const [searchParams, setSearchParams] = useSearchParams()
   const [groups, setGroups] = useState<ConversationGroup[]>([])
+  const [hiddenGroupIds, setHiddenGroupIds] = useState<Set<string>>(new Set())
+  const [deletingGroupKey, setDeletingGroupKey] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
@@ -32,19 +36,54 @@ export default function Chats() {
   const [selectedConversationIds, setSelectedConversationIds] = useState<string[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
 
+  const conversationIdParam = searchParams.get('id')
+  const providerParam = searchParams.get('provider') || ''
+
   // Check for deep link
   useEffect(() => {
-    const id = searchParams.get('id')
-    if (id) {
-      setSelectedConversationIds([id])
+    if (conversationIdParam) {
+      setSelectedConversationIds([conversationIdParam])
       setIsModalOpen(true)
     }
-  }, [searchParams])
+  }, [conversationIdParam])
 
   // Filters
-  const [provider, setProvider] = useState<string>('')
+  const [provider, setProvider] = useState<string>(() => providerParam)
   const [searchInput, setSearchInput] = useState<string>('')
   const debouncedSearch = useDebounce(searchInput, 500)
+
+  // Load hidden groups per workspace
+  useEffect(() => {
+    if (!currentWorkspace?.id) return
+    try {
+      const stored = localStorage.getItem(`${HIDDEN_STORAGE_PREFIX}${currentWorkspace.id}`)
+      if (stored) {
+        const parsed = JSON.parse(stored) as string[]
+        setHiddenGroupIds(new Set(parsed))
+      } else {
+        setHiddenGroupIds(new Set())
+      }
+    } catch {
+      setHiddenGroupIds(new Set())
+    }
+  }, [currentWorkspace?.id])
+
+  const persistHidden = useCallback((nextHidden: Set<string>) => {
+    if (!currentWorkspace?.id) return
+    try {
+      localStorage.setItem(
+        `${HIDDEN_STORAGE_PREFIX}${currentWorkspace.id}`,
+        JSON.stringify(Array.from(nextHidden))
+      )
+    } catch {
+      // Ignore storage issues
+    }
+  }, [currentWorkspace?.id])
+
+  // Sync provider filter from URL changes (no persistence)
+  useEffect(() => {
+    setProvider(providerParam)
+  }, [providerParam])
 
   // Pagination
   const [page, setPage] = useState(0)
@@ -54,6 +93,22 @@ export default function Chats() {
   // Fetch grouped conversations
   const fetchGroups = useCallback(async (reset = false) => {
     if (!currentWorkspace) return
+
+    const sortGroupsByPriority = (items: ConversationGroup[]) => {
+      const providerRank = (providers: string[]) => {
+        const hasOpenAI = providers.some(p => {
+          const lower = p.toLowerCase()
+          return lower.includes('openai') || lower.includes('gpt')
+        })
+        return hasOpenAI ? 0 : 1
+      }
+
+      return [...items].sort((a, b) => {
+        const providerDiff = providerRank(a.providers) - providerRank(b.providers)
+        if (providerDiff !== 0) return providerDiff
+        return new Date(b.last_active).getTime() - new Date(a.last_active).getTime()
+      })
+    }
 
     const currentPage = reset ? 0 : page
     const isInitialLoad = currentPage === 0
@@ -75,9 +130,9 @@ export default function Chats() {
       })
 
       if (reset || isInitialLoad) {
-        setGroups(result.groups)
+        setGroups(sortGroupsByPriority(result.groups))
       } else {
-        setGroups(prev => [...prev, ...result.groups])
+        setGroups(prev => sortGroupsByPriority([...prev, ...result.groups]))
       }
 
       setTotal(result.total)
@@ -128,7 +183,7 @@ export default function Chats() {
   }
 
   const handleClearProvider = () => {
-    setProvider('')
+    handleProviderChange('')
   }
 
   const openConversationGroup = (ids: string[]) => {
@@ -139,10 +194,49 @@ export default function Chats() {
   const closeModal = () => {
     setIsModalOpen(false)
     setSelectedConversationIds([])
-    setSearchParams(params => {
-      params.delete('id')
-      return params
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('id')
+      return next
     })
+  }
+
+  const getGroupKey = (conversationIds: string[]) => conversationIds.sort().join('|')
+
+  const visibleGroups = groups.filter(group => !hiddenGroupIds.has(getGroupKey(group.conversation_ids)))
+
+  const hideGroup = (conversationIds: string[]) => {
+    const key = getGroupKey(conversationIds)
+    setHiddenGroupIds(prev => {
+      const next = new Set(prev)
+      next.add(key)
+      persistHidden(next)
+      return next
+    })
+  }
+
+  const deleteGroup = async (conversationIds: string[]) => {
+    if (!currentWorkspace) return
+    if (!window.confirm('Delete this conversation? This cannot be undone.')) return
+
+    const key = getGroupKey(conversationIds)
+    setDeletingGroupKey(key)
+
+    try {
+      // Soft-delete locally (API delete for grouped conversations not available)
+      setGroups(prev => prev.filter(g => !g.conversation_ids.some(id => conversationIds.includes(id))))
+      setHiddenGroupIds(prev => {
+        const next = new Set(prev)
+        next.add(key)
+        persistHidden(next)
+        return next
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete conversation'
+      alert(message)
+    } finally {
+      setDeletingGroupKey(null)
+    }
   }
 
   return (
@@ -231,7 +325,7 @@ export default function Chats() {
         {/* Results count */}
         {!isLoading && (
           <div className="text-sm text-gray-600">
-            Showing {groups.length} conversation groups (from {total} total)
+            Showing {visibleGroups.length} conversation groups (from {total} total)
           </div>
         )}
 
@@ -250,7 +344,7 @@ export default function Chats() {
         )}
 
         {/* Empty state */}
-        {!isLoading && groups.length === 0 && (
+        {!isLoading && visibleGroups.length === 0 && (
           <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
             <div className="mx-auto w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-4">
               <svg className="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -281,7 +375,7 @@ export default function Chats() {
         )}
 
         {/* Table View */}
-        {!isLoading && groups.length > 0 && (
+        {!isLoading && visibleGroups.length > 0 && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -298,13 +392,16 @@ export default function Chats() {
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Provider
                   </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
                   <th scope="col" className="relative px-6 py-3">
                     <span className="sr-only">Open</span>
                   </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {groups.map((group, idx) => (
+                {visibleGroups.map((group, idx) => (
                   <tr
                     key={`${group.title_normalized}-${idx}`}
                     onClick={() => openConversationGroup(group.conversation_ids)}
@@ -374,6 +471,31 @@ export default function Chats() {
                         })}
                       </div>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            hideGroup(group.conversation_ids)
+                          }}
+                          className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-200 rounded"
+                        >
+                          Hide
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            deleteGroup(group.conversation_ids)
+                          }}
+                          disabled={deletingGroupKey === getGroupKey(group.conversation_ids)}
+                          className="text-xs text-red-600 hover:text-red-700 px-2 py-1 border border-red-200 rounded disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {deletingGroupKey === getGroupKey(group.conversation_ids) ? 'Deleting…' : 'Delete'}
+                        </button>
+                      </div>
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -395,7 +517,7 @@ export default function Chats() {
         )}
 
         {/* End of list indicator */}
-        {!isLoading && !isLoadingMore && groups.length > 0 && !hasMore && (
+        {!isLoading && !isLoadingMore && visibleGroups.length > 0 && !hasMore && (
           <div className="text-center py-4">
             <p className="text-sm text-gray-500">You've reached the end of the list</p>
           </div>

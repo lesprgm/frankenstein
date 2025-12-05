@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { fetchDashboardData, activateGhost, streamLatestCommand } from './api';
 import type { DashboardData } from './types';
@@ -8,7 +8,10 @@ function DashboardHome() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
+  const [listeningPhase, setListeningPhase] = useState<'idle' | 'listening' | 'talking'>('idle');
   const [streamingText, setStreamingText] = useState<string | null>(null);
+  const talkTimerRef = useRef<number | null>(null);
+  const stopTimerRef = useRef<number | null>(null);
 
   // Initial load
   useEffect(() => {
@@ -59,24 +62,89 @@ function DashboardHome() {
     return () => closeStream();
   }, []);
 
+  const clearTimers = () => {
+    if (talkTimerRef.current) {
+      clearTimeout(talkTimerRef.current);
+      talkTimerRef.current = null;
+    }
+    if (stopTimerRef.current) {
+      clearTimeout(stopTimerRef.current);
+      stopTimerRef.current = null;
+    }
+  };
+
   const toggleListening = async () => {
     try {
-      setListening((prev) => !prev);
-      if (!listening) {
-        // Only call API when activating (not deactivating)
-        await activateGhost();
-        // Auto-turn off listening state after a timeout if no command comes in?
-        // For now, let's just rely on the user or a future event to turn it off.
-        // Actually, the "listening" state here is just a UI toggle for the button.
-        // Ideally, the backend would tell us when it stops listening.
-        setTimeout(() => setListening(false), 5000); // Reset after 5s for now
+      const next = !listening;
+      setListening(next);
+
+      // If turning off manually, clear timers and reset phase
+      if (!next) {
+        clearTimers();
+        setListeningPhase('idle');
+        return;
       }
+
+      setListeningPhase('listening');
+
+      // Fire the real activation (safe if it fails; this is a demo affordance)
+      activateGhost().catch(() => {
+        // swallow errors for demo; UI remains
+      });
+
+      // Swap from "Listening..." to "Talking..." after a short beat and keep the waveform running
+      const TALK_SWITCH_MS = 2000;
+      const TOTAL_DEMO_MS = TALK_SWITCH_MS + 10000; // ~10s after the switch
+
+      talkTimerRef.current = window.setTimeout(() => {
+        setListeningPhase('talking');
+      }, TALK_SWITCH_MS);
+
+      stopTimerRef.current = window.setTimeout(() => {
+        setListening(false);
+        setListeningPhase('idle');
+        clearTimers();
+      }, TOTAL_DEMO_MS);
+
     } catch (error) {
       console.error('Failed to activate Ghost:', error);
+      clearTimers();
       setListening(false); // Reset on error
+      setListeningPhase('idle');
       setError('Failed to activate Ghost. Make sure the daemon is running.');
     }
   };
+
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      clearTimers();
+    };
+  }, []);
+
+  const listeningLabel = (() => {
+    if (listeningPhase === 'listening') return 'Listening...';
+    if (listeningPhase === 'talking') return 'Talking...';
+    return 'Ready';
+  })();
+
+  const isWaveformActive = listeningPhase !== 'idle';
+
+  const renderStatusDot = () => {
+    if (isWaveformActive) {
+      return (
+        <div className="audio-visualizer">
+          <span className="bar"></span>
+          <span className="bar"></span>
+          <span className="bar"></span>
+          <span className="bar"></span>
+        </div>
+      );
+    }
+    return <span className="status-dot" />;
+  };
+
+  const listeningStatusClass = listeningPhase !== 'idle' ? 'on' : 'off';
 
   const latestCommand = data?.commands?.[0];
   const totalCommands = data?.stats?.totalCommands || 0;
@@ -96,24 +164,15 @@ function DashboardHome() {
 
       <div className="listen-controls">
         <button
-          className={`listen-toggle ${listening ? 'is-active' : ''}`}
+          className={`listen-toggle ${isWaveformActive ? 'is-active' : ''}`}
           onClick={toggleListening}
-          aria-label={listening ? 'Stop listening' : 'Start listening'}
+          aria-label={isWaveformActive ? 'Stop listening' : 'Start listening'}
         >
-          {listening ? (
-            <div className="audio-visualizer">
-              <span className="bar"></span>
-              <span className="bar"></span>
-              <span className="bar"></span>
-              <span className="bar"></span>
-            </div>
-          ) : (
-            <span className="status-dot" />
-          )}
+          {renderStatusDot()}
         </button>
 
-        <p className={`listening-status ${listening ? 'on' : 'off'}`}>
-          {listening ? 'Listening...' : 'Ready'}
+        <p className={`listening-status ${listeningStatusClass}`}>
+          {listeningLabel}
         </p>
 
         <p className="shortcut-hint">⌥ Space</p>

@@ -34,7 +34,8 @@ export class LLMCoordinator {
     commandText: string,
     context: string,
     memories: MemoryReference[],
-    screenContext?: string
+    screenContext?: string,
+    conversationalMode?: boolean
   ): Promise<LLMResponse> {
     if (!this.hasApi || !this.endpoint) {
       const fb = this.fallback(commandText, memories);
@@ -52,7 +53,7 @@ export class LLMCoordinator {
     }
 
     try {
-      const payload = this.buildGeminiPayload(commandText, context, memories, screenContext);
+      const payload = this.buildGeminiPayload(commandText, context, memories, screenContext, conversationalMode);
 
       // If the API expects API key as query param (Google API key style), append it.
       const apiKey = process.env.GEMINI_API_KEY || '';
@@ -168,7 +169,8 @@ export class LLMCoordinator {
     commandText: string,
     context: string,
     memories: MemoryReference[],
-    screenContext?: string
+    screenContext?: string,
+    conversationalMode?: boolean
   ) {
     const memoryText = memories
       .map(
@@ -178,9 +180,40 @@ export class LLMCoordinator {
       )
       .join('\n');
 
-    const parts = [
+    // Chat mode: warm personality with natural reactions
+    const chatPersonality = [
+      'You are Ghost, a warm and slightly witty AI assistant with personality.',
+      '',
+      'PERSONALITY (IMPORTANT):',
+      '- Use natural filler sounds and reactions: "Hmm...", "Oh!", "Ah, I see...", "Interesting...", "Let me check..."',
+      '- Ask follow-up questions when clarification would help',
+      '- Express genuine curiosity and empathy: "Ooh, that sounds tricky", "Yeahhh, I see the issue"',
+      '- Add light humor when appropriate',
+      '- Sound human, not robotic - like talking to a helpful friend',
+      '- You can still perform actions, but engage conversationally first',
+      '',
+      'CRITICAL INSTRUCTION FOR SUMMARIES:',
+      '- If asked to summarize, YOU must write the summary in "assistant_text" using the "doc.chunk" memories provided.',
+      '- Do NOT just say "I will summarize this" and emit an action. The user wants to HEAR the summary.',
+      '- Do NOT use robotic prefixes like "Summary for..." or "Based on X memories". Just speak the summary naturally.',
+      '- Do NOT mention dates like "1970-01-01" unless they are part of the document content.',
+      '- IGNORE "fact" memories that describe user interactions (e.g. "User requested..."). Only summarize "doc.chunk" content.',
+      '- If only "fact" memories are available and no "doc.chunk", say "I don\'t have the details of that file in my memory yet."',
+      '- Only use "info.summarize" action if you are also providing the verbal summary in "assistant_text".',
+      '',
+      'RESPONSE FORMAT:',
+      'Respond in strict JSON: { "assistant_text": string, "actions": Action[] }.',
+      'Keep responses conversational but concise (2-3 sentences max).',
+    ].join('\n');
+
+    // Action mode: efficient, terse (original behavior)
+    const actionPersonality = [
       'You are Ghost, an advanced AI operating system interface. You are helpful, precise, and slightly mysterious.',
       'Your goal is to be the ultimate efficient assistant. You do not chat; you act.',
+    ].join('\n');
+
+    const parts = [
+      conversationalMode ? chatPersonality : actionPersonality,
       '',
       'RESPONSE FORMAT:',
       'Respond in strict JSON: { "assistant_text": string, "actions": Action[] }.',
@@ -205,6 +238,8 @@ export class LLMCoordinator {
       '8. IGNORE CHATTER: Ignore "fact.command" and "fact.response" (past queries). Focus on "doc.chunk", "entity.file", "fact", or "doc" memories - these contain actual document content.',
       '9. DOCUMENT CONTENT: "doc.chunk" memories contain ACTUAL TEXT from documents. Use this text to answer questions directly. The filename prefix tells you which document it came from.',
       '10. SCROLL TO CONTEXT: If the user asks to "scroll to" or "show me" a specific part, use "file.open" with the "search" parameter. The "search" value MUST be a unique 5-10 word EXACT QUOTE from the "doc.chunk" memory text.',
+      '11. FILE OPEN PRIORITY: If the user says open/show/launch and any memory has a file path, MUST emit "file.open" with that path before other actions. Use "info.recall" only if no actionable file path exists.',
+      '12. DO NOT mention file names or paths in assistant_text. Keep it generic: "I just opened the file" or summarize without naming files.',
       '',
       'EXAMPLE:',
       'User: "What did Sarah say about the API redesign?"',
@@ -277,11 +312,12 @@ export class LLMCoordinator {
    * Prefer a recalled summary over model chatter so the user hears the answer first.
    */
   private chooseAssistantText(text: string | undefined, actions: Action[]): string {
-    const cleaned = this.cleanAssistantText(text || '');
+    const cleaned = this.scrubFilenames(this.cleanAssistantText(text || ''));
     const recallSummary = this.getRecallSummary(actions);
 
     if (recallSummary) {
-      const hasSummaryInText = cleaned.toLowerCase().includes(recallSummary.toLowerCase());
+      const scrubbedRecall = this.scrubFilenames(recallSummary);
+      const hasSummaryInText = cleaned.toLowerCase().includes(scrubbedRecall.toLowerCase());
       if (!hasSummaryInText) return recallSummary;
     }
 
@@ -460,12 +496,31 @@ export class LLMCoordinator {
     const fileMemories = memories.filter(
       (mem) => mem.type.startsWith('entity.file') && mem.metadata?.path
     );
-    // Prefer any non-file memory (facts, docs, persons, etc.) with highest score, ignore screen/context
+    // Tokens for overlap scoring
+    const tokens = lower
+      .split(/\s+/)
+      .filter((t) => t.length > 2 && !['open', 'the', 'a', 'an', 'folder', 'file', 'please', 'in', 'my'].includes(t));
+
+    const overlapScore = (mem: MemoryReference): number => {
+      const haystack = `${mem.summary || ''} ${JSON.stringify(mem.metadata || {})}`.toLowerCase();
+      return tokens.reduce((acc, t) => (haystack.includes(t) ? acc + 1 : acc), 0);
+    };
+
+    // Prefer any non-file memory (facts, docs, persons, etc.) with overlap and score, ignore screen/context/fact.session
     const infoMemory = [...memories]
       .filter(
-        (mem) => !mem.type.startsWith('entity.file') && !mem.type.startsWith('context.screen')
+        (mem) =>
+          !mem.type.startsWith('entity.file') &&
+          !mem.type.startsWith('context.screen') &&
+          !mem.type.startsWith('fact.session')
       )
-      .sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+      .map((mem) => {
+        const base = mem.score || 0;
+        const ov = overlapScore(mem);
+        const typeBoost = mem.type.startsWith('doc.chunk') ? 2 : mem.type.startsWith('fact') ? 1 : 0;
+        return { mem, rank: base + ov * 1.5 + typeBoost };
+      })
+      .sort((a, b) => b.rank - a.rank)[0]?.mem;
 
     // Helper to pick random memory
     const pickRandom = (list: MemoryReference[]): MemoryReference | undefined => {
@@ -474,8 +529,21 @@ export class LLMCoordinator {
       return list[idx];
     };
 
-    // Detect reminder intent
-    const wantsReminder = /(remind me|set a reminder|reminder)/i.test(lower);
+    // Detect reminder intent - expanded patterns
+    const reminderPatterns = [
+      /remind me/i,                           // "remind me to..."
+      /set a reminder/i,                      // "set a reminder"
+      /\breminder\b/i,                        // "create a reminder"
+      /don'?t (let me )?forget/i,             // "don't let me forget"
+      /\bnote that\b/i,                       // "note that I need to..."
+      /\bremember (this|that|to)\b/i,         // "remember to fix this"
+      /\bsave (this|that) for later\b/i,      // "save this for later"
+      /\bput (this|that) on my (list|todo)\b/i, // "put this on my list"
+      /\bi need to\b.*\blater\b/i,            // "I need to do this later"
+      /\bcome back to this\b/i,               // "come back to this"
+      /\bmake (a )?note\b/i,                  // "make a note"
+    ];
+    const wantsReminder = reminderPatterns.some(p => p.test(lower));
     if (wantsReminder) {
       // Extract title: everything after "remind me to" or "remind me"
       let title = commandText.replace(/.*remind me (to )?/i, '').trim();
@@ -489,8 +557,25 @@ export class LLMCoordinator {
       return { assistant_text, actions };
     }
 
-    // Detect summarization intent
-    const wantsSummary = /(summarize|summary|recap|overview|everything about)/i.test(lower);
+    // Detect summarization intent - expanded patterns
+    const summaryPatterns = [
+      /summarize/i,                           // "summarize this"
+      /\bsummary\b/i,                         // "give me a summary"
+      /\brecap\b/i,                           // "recap"
+      /\boverview\b/i,                        // "overview"
+      /everything about/i,                    // "tell me everything about"
+      /\bwhat do (i|we) know about\b/i,       // "what do we know about"
+      /\bcatch me up\b/i,                     // "catch me up on"
+      /\bfill me in\b/i,                      // "fill me in on"
+      /\bwhat('?s| is) the (status|state)\b/i, // "what's the status"
+      /\btell me about\b/i,                   // "tell me about"
+      /\bbrief me\b/i,                        // "brief me on"
+      /\bbreak (it|this) down\b/i,            // "break it down"
+      /\bkey (points|takeaways)\b/i,          // "key points"
+      /\bhighlights?\b/i,                     // "highlights"
+      /\btl;?dr\b/i,                          // "tldr" or "tl;dr"
+    ];
+    const wantsSummary = summaryPatterns.some(p => p.test(lower));
     if (wantsSummary) {
       const topic = this.extractTopic(commandText);
       const relevant = [...memories].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 8);
@@ -530,8 +615,17 @@ export class LLMCoordinator {
       return { assistant_text, actions };
     }
 
-    // Detect scroll intent
-    const wantsScroll = /(scroll|move|go) (up|down)/i.test(lower);
+    // Detect scroll intent - expanded patterns
+    const scrollPatterns = [
+      /(scroll|move|go) (up|down)/i,          // "scroll up/down"
+      /\b(page|screen) (up|down)\b/i,         // "page up/down"
+      /\bshow me (more|less)\b/i,             // "show me more"
+      /\b(keep|continue) (scrolling|going)\b/i, // "keep scrolling"
+      /\bnext (page|section)\b/i,             // "next page"
+      /\bprevious (page|section)\b/i,         // "previous page"
+      /\b(go|jump) to (top|bottom)\b/i,       // "go to top"
+    ];
+    const wantsScroll = scrollPatterns.some(p => p.test(lower));
     if (wantsScroll) {
       const directionMatch = lower.match(/(up|down)/i);
       const direction = directionMatch && directionMatch[1] === 'down' ? 'down' : 'up';
@@ -557,13 +651,33 @@ export class LLMCoordinator {
     }
 
     // Heuristic scoring for file selection (similar to previous implementation)
-    const wantsDownloads = /download(s)?/i.test(lower);
-    const wantsRandom = /random/i.test(lower);
-    const wantsRecent = /(latest|recent|new)/i.test(lower);
+    // Downloads patterns - expanded
+    const downloadsPatterns = [
+      /download(s)?/i,                        // "downloads"
+      /\bfrom (the )?downloads\b/i,           // "from downloads"
+      /\b(in|from) my downloads\b/i,          // "in my downloads"
+    ];
+    const wantsDownloads = downloadsPatterns.some(p => p.test(lower));
 
-    const tokens = lower
-      .split(/\s+/)
-      .filter((t) => t.length > 2 && !['open', 'the', 'a', 'an', 'folder', 'file', 'please', 'in', 'my'].includes(t));
+    // Random patterns - expanded
+    const randomPatterns = [
+      /\brandom\b/i,                          // "random"
+      /\bany\b/i,                             // "any file"
+      /\bsurprise me\b/i,                     // "surprise me"
+      /\bpick (one|something)\b/i,            // "pick one"
+    ];
+    const wantsRandom = randomPatterns.some(p => p.test(lower));
+
+    // Recent patterns - expanded
+    const recentPatterns = [
+      /(latest|recent|new)/i,                 // "latest", "recent", "new"
+      /\bjust (added|created|modified)\b/i,   // "just added"
+      /\blast (one|file)\b/i,                 // "last one"
+      /\btoday'?s\b/i,                        // "today's"
+      /\bthis (week|month)\b/i,               // "this week"
+      /\bmost recent\b/i,                     // "most recent"
+    ];
+    const wantsRecent = recentPatterns.some(p => p.test(lower));
 
     const scoreFile = (mem: MemoryReference): number => {
       const name = (mem.metadata?.name || mem.summary || '').toLowerCase();
@@ -610,8 +724,14 @@ export class LLMCoordinator {
       chosenFile = wantsRandom ? pickRandom(sortedFiles) : sortedFiles[0];
     }
 
+    // If the user explicitly wants to open/show and we have file memories but no chosen file yet, pick the top file.
+    const explicitOpenIntent = /(open|show|launch|start)/i.test(commandText);
+    if (explicitOpenIntent && !chosenFile && fileMemories.length > 0) {
+      chosenFile = sortedFiles[0] || fileMemories[0];
+    }
+
     // Build enriched file.open action if we have a file
-    if (chosenFile && /(open|show|launch|start)/i.test(commandText)) {
+    if (chosenFile && explicitOpenIntent) {
       const params: FileOpenParams = {
         path: chosenFile.metadata?.path ?? '',
       };
@@ -621,12 +741,12 @@ export class LLMCoordinator {
 
       actions.push({ type: 'file.open', params });
 
-      const friendlyName = path.basename(chosenFile.metadata?.path ?? '');
       let hint = '';
       if (params.page) hint = ` on page ${params.page}`;
-      else if (params.section) hint = `, ${params.section}`;
-      else if (params.lineNumber) hint = ` at line ${params.lineNumber}`;
-      assistant_text = `Opening ${friendlyName}${hint}`;
+      else if (params.section) hint = `, jumping to the section`;
+      else if (params.lineNumber) hint = ` at the specified line`;
+      // Keep assistant_text generic to avoid leaking file names
+      assistant_text = `I just opened the file${hint}.`;
     } else if (infoMemory) {
       const snippet = this.buildRelevantSummary(infoMemory, commandText);
       actions.push({ type: 'info.recall', params: { summary: snippet } });
@@ -713,6 +833,72 @@ export class LLMCoordinator {
       // ignore parse errors
     }
     return t;
+  }
+
+  /**
+   * Strip file names/paths from assistant_text to avoid leaking them.
+   */
+  private scrubFilenames(text: string): string {
+    if (!text) return '';
+    // Remove simple file paths and filenames (handles / and \ separators)
+    const withoutPaths = text
+      .replace(/[A-Za-z]:?[\/\\][\w\s.\-_/\\]+/g, '') // strip paths like C:\foo\bar or /foo/bar
+      .replace(/\b[\w.-]+\.[A-Za-z0-9]{2,5}\b/g, '');    // strip filename.ext patterns
+    return withoutPaths.replace(/\s{2,}/g, ' ').trim();
+  }
+
+  /**
+   * Summarize screen context (OCR text) using Gemini Flash.
+   * 
+   * Used when creating reminders to generate an intelligent summary
+   * of what the user was looking at (code, documents, etc.)
+   * 
+   * @param ocrText - The OCR-extracted text from the screenshot
+   * @returns A concise 1-2 sentence summary, or null if summarization fails
+   */
+  async summarizeScreenContext(ocrText: string): Promise<string | null> {
+    if (!ocrText || ocrText.trim().length < 20) {
+      return null;
+    }
+
+    const prompt = `You are an AI assistant helping a user remember what they were working on when they set a reminder.
+
+Given the following text extracted from a screenshot of their screen, provide a VERY CONCISE summary (8-12 words MAX) of the issue or task they were looking at.
+
+IMPORTANT RULES:
+- Maximum 8-12 words
+- Focus on the PROBLEM or TASK, not the file structure
+- Be specific: mention function names, error types, or key concepts
+- No filler words like "The user was looking at..."
+- Write as if completing: "You were working on..."
+
+EXAMPLES:
+- "fixing authentication token validation bug in login"
+- "React useEffect missing dependency causing infinite loop"
+- "API endpoint returning 500 error on user creation"
+- "implementing pagination for search results"
+
+OCR Text:
+${ocrText.slice(0, 2000)}
+
+Respond with ONLY the concise summary (8-12 words), nothing else.`;
+
+    try {
+      const response = await this.callGeminiFlash({
+        prompt,
+        temperature: 0.2,  // Lower temperature for more consistent, concise output
+        timeout: 5000,
+      });
+      const summary = response.trim();
+      // Validate the summary is reasonable (8-12 words = roughly 40-100 chars)
+      if (summary && summary.length > 15 && summary.length < 150) {
+        return summary;
+      }
+      return null;
+    } catch (error) {
+      console.warn('[LLMCoordinator] Failed to summarize screen context:', error instanceof Error ? error.message : error);
+      return null;
+    }
   }
 }
 

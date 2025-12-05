@@ -14,6 +14,8 @@ import { createTextToSpeech } from './tts';
 import { ActionExecutor } from './actions/action-executor';
 import { VoiceFeedbackService } from './services/voice-feedback';
 import { WakeWordService } from './services/wake-word';
+import { ActivationServer } from './services/activation-server';
+import { IntentClassifier, UserIntent } from './voice/intent-classifier';
 import { fileScanner } from './files/file-scanner';
 import { streamChunksIfReady, flushChunks } from './utils/text-processing';
 
@@ -49,12 +51,31 @@ const remindersService = new RemindersService();
 const actionExecutor = new ActionExecutor(voiceFeedback, explainabilityNotifier, remindersService, api);
 const visionService = new VisionService();
 
+// Conversational mode state (in-session only)
+let conversationalMode = config.conversationalMode ?? false;
+
 function createTray(): void {
   const base64Icon = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAt8B9JpN5VQAAAAASUVORK5CYII=';
   const icon = nativeImage.createFromBuffer(Buffer.from(base64Icon, 'base64'));
   tray = new Tray(icon);
   if (tray) tray.setToolTip('Ghost is running');
+  updateTrayMenu();
+}
+
+function updateTrayMenu(): void {
+  if (!tray) return;
   const menu = Menu.buildFromTemplate([
+    {
+      label: `Chat Mode: ${conversationalMode ? 'ON' : 'OFF'}`,
+      click: () => {
+        conversationalMode = !conversationalMode;
+        const status = conversationalMode ? 'Chat mode enabled' : 'Action mode enabled';
+        showOverlayToast('Ghost', status);
+        textToSpeech.speak(conversationalMode ? 'Chat mode!' : 'Action mode.');
+        updateTrayMenu();
+      },
+    },
+    { type: 'separator' },
     {
       label: 'Show overlay toast (test)',
       click: () => showOverlayToast('Ghost', 'This is the custom overlay'),
@@ -68,7 +89,7 @@ function createTray(): void {
       click: () => app.quit(),
     },
   ]);
-  if (tray) tray.setContextMenu(menu);
+  tray.setContextMenu(menu);
 }
 
 async function triggerFileScan(): Promise<void> {
@@ -133,9 +154,16 @@ async function handleHotkey(): Promise<void> {
     // Stage 2: Voice Recording
     const recordStart = Date.now();
     console.log('[Ghost][PERF] 🎤 Recording started');
+
+    // Show listening indicator with waveform
+    showOverlayToast('Ghost', 'Listening...', 10000, 'listening', true);
+
     const audio = await voicePipeline.recordOnce();
     const recordDuration = Date.now() - recordStart;
     console.log(`[Ghost][PERF] ✅ Recording completed in ${recordDuration}ms`);
+
+    // Update toast to processing state (stops waveform)
+    showOverlayToast('Ghost', 'Processing...', 10000, 'listening', false);
 
     // Stage 3: Speech-to-Text
     const sttStart = Date.now();
@@ -151,11 +179,37 @@ async function handleHotkey(): Promise<void> {
     }
     console.info('[Ghost] Transcript captured:', transcript.value);
 
+    // Classify user intent
+    const intent = IntentClassifier.classify(transcript.value);
+
+    // Handle Introduction
+    if (intent === UserIntent.INTRODUCTION) {
+      const introduction = IntentClassifier.getIntroduction();
+      await textToSpeech.speak(introduction);
+      showOverlayToast('Ghost', introduction);
+      return;
+    }
+
+    // Handle Mode Toggles
+    if (intent === UserIntent.CHAT_MODE) {
+      conversationalMode = true;
+      await textToSpeech.speak('Chat mode enabled!');
+      updateTrayMenu();
+      return;
+    }
+
+    if (intent === UserIntent.ACTION_MODE) {
+      conversationalMode = false;
+      await textToSpeech.speak('Action mode.');
+      updateTrayMenu();
+      return;
+    }
+
     // Stage 4: Complete Vision Capture (if needed)
     const shouldCapturePostStt =
       visionConfig.enabled &&
       visionConfig.captureMode === 'on-demand' &&
-      mentionsScreen(transcript.value);
+      (IntentClassifier.classify(transcript.value) === UserIntent.SCREEN_CONTEXT);
     if (!screenCapturePromise && shouldCapturePostStt) {
       const visionPostStart = Date.now();
       console.log('[Ghost][PERF] 📸 Vision capture started (on-demand)');
@@ -201,7 +255,8 @@ async function handleHotkey(): Promise<void> {
         console.info('[Ghost][LLM][token]', token);
       },
       screenContext,
-      screenshotPath
+      screenshotPath,
+      conversationalMode
     );
 
     const apiDuration = Date.now() - apiStart;
@@ -211,7 +266,7 @@ async function handleHotkey(): Promise<void> {
       console.warn('[Ghost] Streaming failed, falling back to non-streaming', commandResult.error);
       const fallbackStart = Date.now();
       console.log('[Ghost][PERF] 🔄 Fallback API call started');
-      commandResult = await api.sendCommand(transcript.value, screenContext, screenshotPath);
+      commandResult = await api.sendCommand(transcript.value, screenContext, screenshotPath, conversationalMode);
       const fallbackDuration = Date.now() - fallbackStart;
       console.log(`[Ghost][PERF] ✅ Fallback API completed in ${fallbackDuration}ms`);
     }
@@ -337,6 +392,13 @@ app.whenReady().then(() => {
     shell.openExternal(dashboardUrl);
   });
 
+  // External activation handler (for dashboard button)
+  ipcMain.handle('ghost/activate', async () => {
+    console.log('[Ghost] External activation triggered');
+    await handleHotkey();
+    return { success: true };
+  });
+
   app.on('activate', () => {
     windowManager.ensureMainWindow();
   });
@@ -375,6 +437,10 @@ app.whenReady().then(() => {
 
   // wakeWordService.start();
   console.log('[Ghost] Wake word service disabled for stability. Use hotkey to activate.');
+
+  // Start HTTP server for external activation (dashboard button)
+  const activationServer = new ActivationServer(3847, handleHotkey);
+  activationServer.start();
 });
 
 app.on('will-quit', () => {
@@ -426,8 +492,4 @@ function dedupeSources(sources: Array<{ id: string; type: string; summary: strin
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 }
 
-function mentionsScreen(text: string): boolean {
-  const lower = text.toLowerCase();
-  // Capture only when the user clearly asks about the screen or requests a reminder of what's visible
-  return /(\bremind me\b|\bremember (this|that)\b|\bsave this\b|what('?s)? on (my |the )?screen|look at (this|my screen)|see on screen|this screen|what am i looking at)/.test(lower);
-}
+

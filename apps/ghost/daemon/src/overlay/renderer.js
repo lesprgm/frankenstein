@@ -174,9 +174,18 @@ function renderGraph(commandId) {
 
                 screenshotContainer.innerHTML = `
                     <div class="screenshot-label">Context Snapshot</div>
-                    <img src="file://${screenshotPath}" class="context-screenshot" />
+                    <img src="file://${screenshotPath}" class="context-screenshot" data-path="${screenshotPath}" />
                 `;
                 screenshotContainer.style.display = 'block';
+
+                const imgEl = screenshotContainer.querySelector('.context-screenshot');
+                if (imgEl) {
+                    imgEl.addEventListener('click', () => {
+                        ipcRenderer.send('ghost/overlay/open-file', screenshotPath);
+                    });
+                    imgEl.style.cursor = 'pointer';
+                    imgEl.title = 'Open screenshot';
+                }
             } else {
                 const sc = document.getElementById('screenshot-container');
                 if (sc) sc.style.display = 'none';

@@ -2,24 +2,15 @@
 
 **A MemoryLayer-powered app that transforms raw AI chat history into structured, reusable memories you can carry between models.**
 
-Handoff is a personal AI memory tool that imports your conversations from ChatGPT and other AI providers, extracts a structured knowledge graph, and lets you reuse that context anywhere—either through an in-app assistant or by generating concise context blocks you can paste into any LLM.
+Handoff imports your conversations from ChatGPT and other AI providers, extracts a structured knowledge graph, and lets you reuse that context anywhere—through an in-app assistant or concise context blocks you can paste into any LLM.
 
----
+- 📥 **Import**: Bring conversations from ChatGPT (via official export) into your own database
+- 🧠 **Extract**: MemoryLayer builds structured entities, facts, and decisions from raw chats
+- 🔄 **Reuse**: Query memories in-app or generate smart context blocks for any LLM
+- 🔒 **Privacy**: Your data stays in your own Supabase database, ToS-compliant
+- ✅ **MAKER**: Multi-agent consensus for high-confidence extraction
 
-## What Handoff Does
-
-If you've been using ChatGPT, Claude, or other AI assistants for months, you have valuable context trapped inside each platform:
-- Design decisions and technical specs
-- Project requirements and preferences  
-- Ideas, todos, and learnings
-
-**Handoff's solution:**
-
-1. **Import** – Bring conversations from ChatGPT (via official export) into your own Supabase database
-2. **Extract** – Run MemoryLayer to build a structured knowledge graph of entities, facts, and decisions
-3. **Reuse** – Query memories in-app or copy a smart, concise context block into any LLM
-
-Handoff doesn't replace your existing tools—it sits alongside them, giving you control over your AI conversation history.
+**Use Cases**: Context portability between models • Knowledge management • Decision tracking • Semantic search over past conversations • Team handoffs without full transcripts
 
 ---
 
@@ -354,18 +345,6 @@ See [`backend/SETUP_DATABASE.sql`](./backend/SETUP_DATABASE.sql) for full schema
 
 ---
 
-## Frontend Features
-
-- **Dashboard**: Overview of workspaces, conversations, and recent memories
-- **Import Flow**: Drag-and-drop ChatGPT export with progress tracking
-- **Memory Browser**: Filter by type, date, confidence; search semantically
-- **Entity Views**: Explore entities, facts, and decisions with relationships
-- **Conversation Detail**: View full conversation with extracted memories highlighted
-- **Handoff Export**: One-click copy of smart context block for any LLM
-- **Dark Mode**: Beautiful, modern UI with Tailwind CSS
-
----
-
 ## Development Workflow
 
 ### Monorepo Structure
@@ -464,18 +443,9 @@ The `.kiro/specs/app-handoff/` directory contains detailed specifications that g
    - Error handling and edge case coverage
 
 This approach enabled rapid prototyping of a full-stack application while maintaining clear separation of concerns and consistent APIs across frontend and backend.
-
----
-
 ## Contributing
 
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions welcome! Fork the repo, create a feature branch, and open a PR.
 
 ---
 
@@ -485,35 +455,4 @@ MIT
 
 ---
 
-## Related Documentation
-
-- [Backend README](./backend/README.md) – Detailed backend architecture
-- [Frontend README](./frontend/README.md) – Frontend tech stack
-- [MemoryLayer Core](../../packages/core/README.md) – Core framework docs
-- [Getting Started Guide](../../docs/GETTING_STARTED.md) – MemoryLayer quickstart
-
----
-
-## Use Cases
-
-- **Context Portability**: Move your ChatGPT context to Claude, Gemini, or local models
-- **Knowledge Management**: Browse your AI conversation history as a structured knowledge base
-- **Decision Tracking**: See what decisions were made and when
-- **Research Assistant**: Query your past conversations semantically
-- **Team Handoffs**: Share relevant context with teammates without full transcripts
-
----
-
-## Acknowledgments
-
-Built with:
-- [MemoryLayer](../../README.md) – Persistent memory framework
-- [Cloudflare Workers](https://workers.cloudflare.com/) – Edge runtime
-- [Supabase](https://supabase.com/) – Postgres + Auth
-- [Hono](https://hono.dev/) – Web framework
-- [React](https://react.dev/) + [Vite](https://vitejs.dev/) – Frontend stack
-- [Tailwind CSS](https://tailwindcss.com/) – Styling
-
----
-
-**Questions?** Check out the [backend README](./backend/README.md) or [frontend README](./frontend/README.md) for more details.
+See also: [Backend README](./backend/README.md) • [Frontend README](./frontend/README.md) • [MemoryLayer Core](../../packages/core/README.md)

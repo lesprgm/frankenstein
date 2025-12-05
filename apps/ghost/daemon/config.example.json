@@ -4,6 +4,7 @@
     "apiKey": "ghost-api-key-123"
   },
   "autoLaunch": true,
+  "conversationalMode": false,
   "user": {
     "id": "user-123",
     "workspace_id": "workspace-456"
@@ -16,7 +17,7 @@
   },
   "vision": {
     "enabled": true,
-    "captureMode": "always" // "always" | "on-demand"
+    "captureMode": "always"
   },
   "voice": {
     "sttProvider": "local-whisper",
@@ -37,8 +38,19 @@
       "~/Downloads",
       "~/Documents"
     ],
-    "includeExtensions": ["pdf", "docx", "txt", "md", "pptx"],
+    "includeExtensions": [
+      "pdf",
+      "docx",
+      "txt",
+      "md",
+      "pptx"
+    ],
     "maxDepth": 3,
-    "excludePatterns": ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**"]
+    "excludePatterns": [
+      "**/node_modules/**",
+      "**/.git/**",
+      "**/dist/**",
+      "**/build/**"
+    ]
   }
 }

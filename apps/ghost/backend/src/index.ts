@@ -44,6 +44,7 @@ import explainRoutes from './routes/explain.js';
 import searchRoutes from './routes/search.js';
 import openFileRoutes from './routes/open-file.js';
 import activateRoutes from './routes/activate.js';
+import summarizeContextRoutes from './routes/summarize-context.js';
 
 // API routes
 app.route('/api/command', commandRoutes);
@@ -55,6 +56,7 @@ app.route('/api/explain', explainRoutes);
 app.route('/api/search', searchRoutes);
 app.route('/api/open-file', openFileRoutes);
 app.route('/api/activate', activateRoutes);
+app.route('/api/summarize-context', summarizeContextRoutes);
 
 // 404 handler
 app.notFound((c) => {

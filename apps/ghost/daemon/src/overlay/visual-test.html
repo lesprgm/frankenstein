@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Ghost Overlay Visual Test</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            background: url('https://images.unsplash.com/photo-1497215728101-856f4ea42174?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80') no-repeat center center fixed;
+            background-size: cover;
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-end;
+            padding: 20px;
+        }
+
+        .source-popup {
+            width: 300px;
+            height: 500px;
+            position: relative;
+            /* Override fixed for demo */
+            top: auto;
+            right: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="popup" class="source-popup">
+        <div class="popup-header">
+            <div class="popup-header-content">
+                <span class="popup-title">Found in</span>
+                <span class="source-count" id="source-count">0 sources</span>
+            </div>
+            <button class="close-btn" id="close-btn">×</button>
+        </div>
+        <div class="sources-list" id="sources-list">
+            <!-- Sources will be injected here -->
+        </div>
+        <div class="popup-footer">
+            <button class="footer-btn" id="dismiss-btn">Dismiss</button>
+        </div>
+    </div>
+
+    <script>
+        // Mock Data
+        const mockSources = [
+            {
+                id: '1',
+                score: 0.95,
+                metadata: {
+                    name: 'bug-report.md',
+                    path: '/Users/leslie/docs/bug-report.md',
+                    modified: new Date().toISOString()
+                },
+                summary: 'The bug is caused by a race condition in the authentication flow when the token expires.'
+            },
+            {
+                id: '2',
+                score: 0.82,
+                metadata: {
+                    name: 'auth-service.ts',
+                    path: '/Users/leslie/src/auth-service.ts',
+                    modified: new Date(Date.now() - 86400000).toISOString()
+                },
+                summary: 'function refreshToken() { ... } handles the token renewal logic.'
+            },
+            {
+                id: '3',
+                score: 0.45,
+                metadata: {
+                    name: 'meeting-notes.txt',
+                    path: '/Users/leslie/notes/meeting-notes.txt',
+                    modified: new Date(Date.now() - 172800000).toISOString()
+                },
+                summary: 'discussed the auth issue in the standup.'
+            }
+        ];
+
+        // Renderer Logic (Adapted for Browser)
+        const sourcesList = document.getElementById('sources-list');
+        const sourceCount = document.getElementById('source-count');
+
+        function getFileType(source) {
+            if (source.metadata && source.metadata.name) {
+                const parts = source.metadata.name.split('.');
+                if (parts.length > 1) {
+                    return parts.pop().toLowerCase();
+                }
+            }
+            return 'txt';
+        }
+
+        function renderSources(sources) {
+            sourcesList.innerHTML = '';
+            sourceCount.textContent = `${sources.length} source${sources.length !== 1 ? 's' : ''}`;
+
+            sources.forEach(source => {
+                const card = document.createElement('div');
+                card.className = 'source-card';
+
+                const score = source.score || 0;
+                const confidenceClass = score > 0.7 ? 'high' : score > 0.4 ? 'medium' : 'low';
+
+                let dateStr = '';
+                if (source.metadata && source.metadata.modified) {
+                    try {
+                        dateStr = new Date(source.metadata.modified).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    } catch (e) { }
+                }
+
+                const name = (source.metadata && source.metadata.name) ? source.metadata.name : source.id;
+                const type = getFileType(source);
+                const summary = source.summary || '';
+
+                card.innerHTML = `
+                    <div class="confidence-bar ${confidenceClass}"></div>
+                    <div class="source-header">
+                        <div class="file-type ${type}">${type}</div>
+                        <span class="source-title">${name}</span>
+                        ${dateStr ? `<span class="source-date">${dateStr}</span>` : ''}
+                    </div>
+                    <div class="source-snippet">${summary}</div>
+                `;
+
+                sourcesList.appendChild(card);
+            });
+        }
+
+        // Initialize
+        renderSources(mockSources);
+    </script>
+</body>
+
+</html>

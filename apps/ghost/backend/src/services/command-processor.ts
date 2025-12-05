@@ -456,7 +456,8 @@ export class CommandProcessor extends EventEmitter {
       request.text,
       contextResult.context,
       memories,
-      request.screen_context
+      request.screen_context,
+      request.conversational_mode
     );
 
     const response: CommandResponse = {

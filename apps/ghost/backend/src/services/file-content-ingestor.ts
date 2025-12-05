@@ -236,8 +236,16 @@ export class FileContentIngestor {
       modified: file.modified || stats.mtime.toISOString(),
     };
 
-    // Skip unchanged files to save LLM tokens/time
-    if (process.env.NODE_ENV !== 'test' && await storageService.isFileUnchanged(effectiveFile as any, workspaceId)) {
+    // Skip unchanged files only when smart fingerprinting is explicitly enabled and not forcing reingest
+    const forceReingest = process.env.FORCE_REINGEST === 'true';
+    const smartFingerprintingEnabled =
+      process.env.DISABLE_SMART_FINGERPRINTING === 'true'
+        ? false
+        : process.env.SMART_FINGERPRINTING_ENABLED
+          ? process.env.SMART_FINGERPRINTING_ENABLED === 'true'
+          : true; // default ON
+
+    if (!forceReingest && smartFingerprintingEnabled && process.env.NODE_ENV !== 'test' && await storageService.isFileUnchanged(effectiveFile as any, workspaceId)) {
       console.info('[Ghost][Ingest] Skipping unchanged file', { path: file.path });
       return [];
     }
@@ -275,14 +283,16 @@ export class FileContentIngestor {
       const fileHash = this.hashPath(path.resolve(file.path));
       return [{
         id: `doc-${fileHash}-0`,
-        type: 'fact',
-        summary: `${file.name}: ${raw.slice(0, 500)}`,
+        type: 'doc.chunk',
+        summary: raw.slice(0, 500),
         score: 0.9,
         metadata: {
           path: file.path,
           name: file.name,
           kind: 'file.test',
           source_file_id: `file-${fileHash}`,
+          chunk_index: 0,
+          total_chunks: 1,
         },
         workspace_id: workspaceId,
         createdAt: new Date().toISOString(),
@@ -293,17 +303,31 @@ export class FileContentIngestor {
     // Convert file content to conversation format for MemoryLayer
     const conversation = this.convertToConversation(raw, file.path, file.name);
 
-    // Try MemoryLayer extraction first, fallback to simple chunking if it fails
+    // Try MemoryLayer extraction first
     let extractedMemories = await this.extractWithMemoryLayer(
       conversation,
       workspaceId,
       file
     );
 
-    // If LLM extraction failed (rate limits, etc.), use simple fallback
-    if (extractedMemories.length === 0) {
-      console.info('[Ghost][Ingest] Using fallback extraction (no LLM)', { file: file.name });
-      extractedMemories = this.extractWithFallback(raw, file, workspaceId);
+    // If LLM extraction failed or produced only tiny snippets, add fallback chunks to ensure coverage
+    const hasSubstantial = extractedMemories.some(m => (m.summary?.length ?? 0) >= 120);
+    if (extractedMemories.length === 0 || !hasSubstantial) {
+      const fallback = this.extractWithFallback(raw, file, workspaceId);
+      if (extractedMemories.length === 0) {
+        console.info('[Ghost][Ingest] Using fallback extraction (no/insufficient LLM output)', {
+          file: file.name,
+          fallbackChunks: fallback.length,
+        });
+        extractedMemories = fallback;
+      } else {
+        console.info('[Ghost][Ingest] Augmenting LLM output with fallback chunks', {
+          file: file.name,
+          llmMemories: extractedMemories.length,
+          fallbackChunks: fallback.length,
+        });
+        extractedMemories = [...extractedMemories, ...fallback];
+      }
     }
 
     return extractedMemories;
@@ -320,10 +344,49 @@ export class FileContentIngestor {
   ): IngestedMemory[] {
     const fileHash = this.hashPath(path.resolve(file.path));
     const sections = this.splitIntoSections(content);
-    
-    // Limit to reasonable number of chunks per file
-    const maxChunks = 10;
-    const chunks = sections.slice(0, maxChunks);
+
+    // Limit and merge very small sections to avoid tiny chunks
+    const maxChunks = 12;
+    const merged: string[] = [];
+    let buffer = '';
+    const MIN_CHUNK = 250;
+    const MAX_CHUNK = 1200;
+
+    for (const sec of sections) {
+      const candidate = (buffer ? buffer + ' ' : '') + sec;
+      if (candidate.length < MIN_CHUNK) {
+        buffer = candidate;
+        continue;
+      }
+      if (candidate.length <= MAX_CHUNK) {
+        merged.push(candidate.trim());
+        buffer = '';
+      } else {
+        if (buffer) {
+          merged.push(buffer.trim());
+          buffer = '';
+        }
+        // if the section itself is huge, hard-split it
+        let remaining = sec;
+        while (remaining.length > MAX_CHUNK) {
+          merged.push(remaining.slice(0, MAX_CHUNK).trim());
+          remaining = remaining.slice(MAX_CHUNK);
+        }
+        if (remaining.trim()) buffer = remaining.trim();
+      }
+    }
+    if (buffer) merged.push(buffer.trim());
+
+    let chunks = merged.slice(0, maxChunks);
+
+    // If the tail chunk is too short and we have a predecessor, merge it forward
+    if (chunks.length > 1) {
+      const last = chunks[chunks.length - 1];
+      if (last.length < 180) {
+        chunks[chunks.length - 2] = `${chunks[chunks.length - 2]} ${last}`.trim();
+        chunks = chunks.slice(0, -1);
+      }
+    }
     
     console.info('[Ghost][Ingest] Fallback extraction creating chunks', {
       file: file.name,
@@ -334,7 +397,7 @@ export class FileContentIngestor {
     return chunks.map((chunk, index) => ({
       id: `chunk-${fileHash}-${index}`,
       type: 'doc.chunk',
-      summary: `${file.name}: ${chunk.slice(0, 500)}`,
+      summary: chunk.slice(0, 500),
       score: 0.8,  // Good confidence for raw content
       metadata: {
         path: file.path,
@@ -390,35 +453,43 @@ export class FileContentIngestor {
    * Prefers paragraph boundaries, fallback to sentence boundaries.
    */
   private splitIntoSections(content: string): string[] {
-    const clean = content.replace(/\s+/g, ' ').trim();
-    if (!clean) return [];
+    // Preserve paragraph structure; normalize whitespace within paragraphs only
+    const rawParas = content.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+    const paragraphs = rawParas.map(p => p.replace(/\s+/g, ' ')).filter(Boolean);
 
-    // Split by double newlines (paragraphs) or single newlines
-    const paragraphs = clean.split(/\n\n+/).filter(p => p.trim().length > 0);
-
-    // If paragraphs are too long (>2000 chars), split them further by sentences
     const sections: string[] = [];
-    for (const para of paragraphs) {
-      if (para.length <= 2000) {
-        sections.push(para.trim());
-      } else {
-        // Split long paragraphs by sentences
-        const sentences = para.split(/[.!?]+/).filter(s => s.trim().length > 0);
-        let currentSection = '';
+    const MAX_SECTION = 1800; // aim for sub-2k chunks to keep summaries meaningful
+    const MIN_SECTION = 300;  // avoid tiny fragments when possible
 
-        for (const sentence of sentences) {
-          if ((currentSection + sentence).length > 2000 && currentSection) {
-            sections.push(currentSection.trim());
-            currentSection = sentence;
-          } else {
-            currentSection += (currentSection ? '. ' : '') + sentence;
-          }
-        }
-
-        if (currentSection) {
-          sections.push(currentSection.trim());
+    const pushChunks = (text: string) => {
+      if (text.length <= MAX_SECTION) {
+        sections.push(text.trim());
+        return;
+      }
+      // Split long text by sentences and pack into ~MAX_SECTION chunks
+      const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+      let current = '';
+      for (const sentence of sentences) {
+        if ((current + ' ' + sentence).trim().length > MAX_SECTION && current.length >= MIN_SECTION) {
+          sections.push(current.trim());
+          current = sentence;
+        } else {
+          current = (current ? current + ' ' : '') + sentence;
         }
       }
+      if (current.trim()) {
+        sections.push(current.trim());
+      }
+    };
+
+    // If no paragraphs detected, treat the whole content as one and split
+    if (paragraphs.length === 0) {
+      pushChunks(content.replace(/\s+/g, ' ').trim());
+      return sections;
+    }
+
+    for (const para of paragraphs) {
+      pushChunks(para);
     }
 
     return sections;
@@ -499,8 +570,8 @@ export class FileContentIngestor {
             memories.forEach((memory, index) => {
               aggregatedMemories.push({
                 id: `doc-${fileHash}-${batchIndex}-${index}`,
-                type: 'fact',
-                summary: `${file.name}: ${memory.content}`,
+                type: 'doc.chunk',
+                summary: memory.content,
                 score: memory.confidence,
                 metadata: {
                   path: file.path,

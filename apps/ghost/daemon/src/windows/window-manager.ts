@@ -174,14 +174,14 @@ export class WindowManager {
         }
     }
 
-    public showToast(title: string, body: string, duration: number = 4000, key?: string): void {
+    public showToast(title: string, body: string, duration: number = 4000, key?: string, listening?: boolean): void {
         const toastWin = this.createToastWindow();
         if (!toastWin || toastWin.isDestroyed()) {
             console.warn('[WindowManager] Toast window not available for toast:', title, body);
             return;
         }
 
-        toastWin.webContents.send('ghost/toast', { title, body, duration, key });
+        toastWin.webContents.send('ghost/toast', { title, body, duration, key, listening });
         toastWin.showInactive();
         toastWin.setAlwaysOnTop(true, 'screen-saver');
         toastWin.setVisibleOnAllWorkspaces(true);

@@ -151,6 +151,35 @@ export function seedDemoData(db: Database.Database): void {
             created_at: now.toISOString(),
             updated_at: now.toISOString(),
         },
+        {
+            id: 'mem-demo-chunk-1',
+            workspace_id: 'demo',
+            conversation_id: null,
+            type: 'doc.chunk',
+            content: 'The Maker architecture uses a voting mechanism to ensure consensus among agents. This reduces hallucination rates by 40% compared to single-shot retrieval.',
+            confidence: 0.95,
+            metadata: JSON.stringify({
+                path: '/Users/demo/Documents/Maker_Architecture_Whitepaper.md',
+                chunkIndex: 4,
+                startLine: 120,
+                endLine: 125
+            }),
+            embedding: null,
+            created_at: now.toISOString(),
+            updated_at: now.toISOString(),
+        },
+        {
+            id: 'mem-demo-fact-1',
+            workspace_id: 'demo',
+            conversation_id: null,
+            type: 'fact',
+            content: 'The user prefers dark mode for all dashboard interfaces.',
+            confidence: 0.92,
+            metadata: JSON.stringify({ source: 'user_preference' }),
+            embedding: null,
+            created_at: now.toISOString(),
+            updated_at: now.toISOString(),
+        },
     ];
 
     const insertMemory = db.prepare(`

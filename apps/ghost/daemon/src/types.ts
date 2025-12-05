@@ -11,6 +11,7 @@ export interface DaemonConfig {
   vision?: VisionConfig;
   files: FilesConfig;
   autoLaunch?: boolean;
+  conversationalMode?: boolean; // Toggle between action mode (default) and chat mode
 }
 
 export interface BackendConfig {
@@ -65,6 +66,7 @@ export interface CommandRequest {
   timestamp: string;
   screen_context?: string;
   screenshot_path?: string;
+  conversational_mode?: boolean; // When true, use chat personality; when false, use action mode
   meta: {
     source: 'voice';
     client_version: string;

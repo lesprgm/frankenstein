@@ -94,11 +94,18 @@ export const fetchExplanation = async (commandId: string) => {
 
 /**
  * Activate Ghost voice listening
+ * Calls the daemon's HTTP server directly (port 3847)
  */
 export const activateGhost = async () => {
   try {
-    const response = await client.post('/api/activate');
-    return response.data;
+    // Call daemon directly - it has an HTTP server on port 3847
+    const response = await fetch('http://localhost:3847/activate', {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      throw new Error(`Daemon returned ${response.status}`);
+    }
+    return await response.json();
   } catch (error) {
     console.error('Failed to activate Ghost:', error);
     throw error;

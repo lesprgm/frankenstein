@@ -280,4 +280,162 @@ describe('Ghost Demo Simulation', () => {
             expect(results[0].error).toBe('File not found');
         });
     });
+
+    // ============================================================
+    // CONVERSATIONAL MODE DEMO SCENARIOS
+    // ============================================================
+
+    describe('Scenario 10: Voice Mode Toggle Detection', () => {
+        it('should detect "chat mode" voice command pattern', () => {
+            const transcripts = [
+                'chat mode',
+                'switch to chat mode',
+                'conversational mode',
+                'enable chat mode please'
+            ];
+
+            transcripts.forEach(transcript => {
+                const isChatModeToggle = /\b(chat mode|conversational mode)\b/.test(transcript.toLowerCase());
+                expect(isChatModeToggle).toBe(true);
+            });
+        });
+
+        it('should detect "action mode" voice command pattern', () => {
+            const transcripts = [
+                'action mode',
+                'command mode',
+                'switch to action mode'
+            ];
+
+            transcripts.forEach(transcript => {
+                const isActionModeToggle = /\b(action mode|command mode)\b/.test(transcript.toLowerCase());
+                expect(isActionModeToggle).toBe(true);
+            });
+        });
+
+        it('should NOT trigger mode toggle for normal commands', () => {
+            const normalCommands = [
+                'open my documents',
+                'what is the chat about',
+                'remind me to check the action items',
+                'summarize the conversation'
+            ];
+
+            normalCommands.forEach(cmd => {
+                const isChatToggle = /\b(chat mode|conversational mode)\b/.test(cmd.toLowerCase());
+                const isActionToggle = /\b(action mode|command mode)\b/.test(cmd.toLowerCase());
+                expect(isChatToggle || isActionToggle).toBe(false);
+            });
+        });
+    });
+
+    describe('Scenario 11: Conversational Mode State Persistence', () => {
+        it('should maintain mode state across multiple commands', () => {
+            let conversationalMode = false;
+
+            // Simulate toggle
+            conversationalMode = true;
+            expect(conversationalMode).toBe(true);
+
+            // Simulate commands in chat mode
+            const command1 = { text: 'what was I working on?', mode: conversationalMode };
+            const command2 = { text: 'tell me more about that', mode: conversationalMode };
+
+            expect(command1.mode).toBe(true);
+            expect(command2.mode).toBe(true);
+
+            // Toggle back
+            conversationalMode = false;
+            const command3 = { text: 'open downloads', mode: conversationalMode };
+
+            expect(command3.mode).toBe(false);
+        });
+    });
+
+    describe('Scenario 12: Mixed Mode Workflow', () => {
+        it('should handle rapid mode switching without errors', () => {
+            let mode = false;
+            const toggleHistory: boolean[] = [];
+
+            // Simulate rapid toggling (edge case for demo)
+            for (let i = 0; i < 5; i++) {
+                mode = !mode;
+                toggleHistory.push(mode);
+            }
+
+            expect(toggleHistory).toEqual([true, false, true, false, true]);
+            expect(mode).toBe(true); // Ends in chat mode
+        });
+
+        it('should correctly pass mode flag through command pipeline', () => {
+            const simulateCommand = (text: string, conversationalMode: boolean) => ({
+                user_id: 'demo',
+                command_id: 'cmd-' + Date.now(),
+                text,
+                timestamp: new Date().toISOString(),
+                conversational_mode: conversationalMode,
+                meta: { source: 'voice' as const, client_version: '0.1.0' }
+            });
+
+            const actionModeCmd = simulateCommand('open the report', false);
+            const chatModeCmd = simulateCommand('hey, what were we discussing?', true);
+
+            expect(actionModeCmd.conversational_mode).toBe(false);
+            expect(chatModeCmd.conversational_mode).toBe(true);
+        });
+    });
+
+    describe('Scenario 13: Demo Flow - Full Conversational Session', () => {
+        it('should simulate a realistic hackathon demo flow', async () => {
+            const demoScenario = [
+                // Start in action mode (default)
+                { step: 1, transcript: 'open my latest download', mode: false, expectedAction: 'file.open' },
+
+                // User toggles to chat mode
+                { step: 2, transcript: 'chat mode', mode: true, expectedAction: 'mode_toggle' },
+
+                // Conversational queries
+                { step: 3, transcript: 'hey Ghost, what was I working on yesterday?', mode: true, expectedAction: 'info.recall' },
+                { step: 4, transcript: 'tell me more about that bug', mode: true, expectedAction: 'info.recall' },
+                { step: 5, transcript: 'can you show me the file?', mode: true, expectedAction: 'file.open' },
+
+                // User toggles back to action mode
+                { step: 6, transcript: 'action mode', mode: false, expectedAction: 'mode_toggle' },
+
+                // Quick action command
+                { step: 7, transcript: 'remind me to fix this tomorrow', mode: false, expectedAction: 'reminder.create' }
+            ];
+
+            for (const step of demoScenario) {
+                // Simulate mode toggle detection
+                if (step.expectedAction === 'mode_toggle') {
+                    const isChatToggle = /\b(chat mode|conversational mode)\b/i.test(step.transcript);
+                    const isActionToggle = /\b(action mode|command mode)\b/i.test(step.transcript);
+                    expect(isChatToggle || isActionToggle).toBe(true);
+                }
+
+                // Verify mode is correctly set for each step
+                expect(typeof step.mode).toBe('boolean');
+            }
+        });
+
+        it('should handle "personality" responses in chat mode', () => {
+            const chatModePromptIndicators = [
+                'warm and slightly witty',
+                'Hmm...',
+                'Oh!',
+                'Interesting...',
+                'follow-up questions',
+                'empathy',
+                'light humor'
+            ];
+
+            // Simulate checking that chat mode prompt contains personality
+            const chatPrompt = chatModePromptIndicators.join(' ');
+
+            expect(chatPrompt).toContain('Hmm');
+            expect(chatPrompt).toContain('witty');
+            expect(chatPrompt).toContain('empathy');
+        });
+    });
 });

@@ -24,7 +24,8 @@ describe('ActionExecutor - Demo Mode Reminders', () => {
         };
 
         mockApiClient = {
-            createMemory: vi.fn().mockResolvedValue({ ok: true, value: { id: 'test-memory-id' } })
+            createMemory: vi.fn().mockResolvedValue({ ok: true, value: { id: 'test-memory-id' } }),
+            summarizeContext: vi.fn().mockResolvedValue({ ok: true, value: 'LLM-generated summary of the code showing a login function' })
         };
 
         executor = new ActionExecutor(
@@ -69,7 +70,8 @@ describe('ActionExecutor - Demo Mode Reminders', () => {
                     summary: expect.stringContaining('Fix auth bug'),
                     metadata: expect.objectContaining({
                         screenshot: '/Users/test/.ghost/screenshots/test.png',
-                        context: expect.stringContaining('Active file: /Users/test/auth.ts')
+                        context: expect.stringContaining('Active file: /Users/test/auth.ts'),
+                        contextSummary: 'LLM-generated summary of the code showing a login function'
                     })
                 })
             );
@@ -91,6 +93,91 @@ describe('ActionExecutor - Demo Mode Reminders', () => {
             expect(result.status).toBe('success');
             expect(mockRemindersService.createReminder).toHaveBeenCalled();
             expect(mockApiClient.createMemory).not.toHaveBeenCalled(); // No screen context
+        });
+
+        it('should call LLM summarization for screen context', async () => {
+            const action: Action = {
+                type: 'reminder.create',
+                params: {
+                    title: 'Test LLM summary',
+                    notes: ''
+                }
+            };
+
+            const context = {
+                commandId: 'test-cmd-llm',
+                memories: [] as MemoryReference[],
+                screenContext: {
+                    text: 'function calculateTotal(items) { return items.reduce((sum, item) => sum + item.price, 0); }',
+                    screenshotPath: '/Users/test/.ghost/screenshots/llm-test.png'
+                }
+            };
+
+            await executor.execute(action, context);
+
+            // Verify LLM summarization was called with the OCR text
+            expect(mockApiClient.summarizeContext).toHaveBeenCalledWith(
+                expect.stringContaining('calculateTotal')
+            );
+        });
+
+        it('should fall back to text truncation when LLM fails', async () => {
+            // Mock LLM failure
+            mockApiClient.summarizeContext.mockResolvedValueOnce({ ok: false, error: new Error('API timeout') });
+
+            const action: Action = {
+                type: 'reminder.create',
+                params: {
+                    title: 'Test fallback',
+                    notes: ''
+                }
+            };
+
+            const context = {
+                commandId: 'test-cmd-fallback',
+                memories: [] as MemoryReference[],
+                screenContext: {
+                    text: 'This is a test sentence that should be truncated. And more text here.',
+                    screenshotPath: '/Users/test/.ghost/screenshots/fallback-test.png'
+                }
+            };
+
+            const result = await executor.execute(action, context);
+
+            expect(result.status).toBe('success');
+            // Memory should still be created with fallback summary
+            expect(mockApiClient.createMemory).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    metadata: expect.objectContaining({
+                        // Fallback uses first sentence truncation (starts with "This is a test")
+                        contextSummary: expect.stringContaining('This is a test')
+                    })
+                })
+            );
+        });
+
+        it('should not call LLM for short screen context', async () => {
+            const action: Action = {
+                type: 'reminder.create',
+                params: {
+                    title: 'Short context test',
+                    notes: ''
+                }
+            };
+
+            const context = {
+                commandId: 'test-cmd-short',
+                memories: [] as MemoryReference[],
+                screenContext: {
+                    text: 'Too short',  // Less than 20 chars
+                    screenshotPath: '/Users/test/.ghost/screenshots/short-test.png'
+                }
+            };
+
+            await executor.execute(action, context);
+
+            // LLM should not be called for very short text
+            expect(mockApiClient.summarizeContext).not.toHaveBeenCalled();
         });
     });
 
