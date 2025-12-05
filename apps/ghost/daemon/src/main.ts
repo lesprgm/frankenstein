@@ -205,6 +205,19 @@ async function handleHotkey(): Promise<void> {
       return;
     }
 
+    if (intent === UserIntent.SYSTEM_CONTROL) {
+      const lower = transcript.value.toLowerCase();
+      if (lower.includes('help') || lower.includes('commands') || lower.includes('what can you do')) {
+        await textToSpeech.speak('I can search your memories, open files, create reminders, and see your screen.');
+        return;
+      }
+
+      // Stop/Cancel/Silence
+      textToSpeech.stop();
+      showOverlayToast('Ghost', 'Stopped.');
+      return;
+    }
+
     // Stage 4: Complete Vision Capture (if needed)
     const shouldCapturePostStt =
       visionConfig.enabled &&

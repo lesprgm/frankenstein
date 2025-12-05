@@ -10,7 +10,7 @@ export const makerConfig = {
     enabled: process.env.MAKER_ENABLED !== 'false',  // Default: enabled unless explicitly disabled
 
     /** Number of parallel microagents to run for consensus */
-    replicas: parseInt(process.env.MAKER_REPLICAS || '3', 10),
+    replicas: parseInt(process.env.MAKER_REPLICAS || '1', 10),
 
     /** K-threshold for voting (simple 2-of-3 majority) */
     voteK: parseInt(process.env.MAKER_VOTE_K || '2', 10),

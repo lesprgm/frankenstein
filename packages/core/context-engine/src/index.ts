@@ -431,8 +431,6 @@ export class ContextEngine {
       return [];
     }
 
-    const relatedMemories: RelatedMemory[] = [];
-
     try {
       // Fetch relationships for this memory
       const relationshipsResult = await this.storageClient.getMemoryRelationships(
@@ -446,80 +444,88 @@ export class ContextEngine {
           workspaceId: sanitizeForLogging(workspaceId, 50),
           error: sanitizeError(relationshipsResult.error),
         });
-        return relatedMemories;
+        return [];
       }
 
       const relationships = relationshipsResult.value;
 
-      // Process each relationship
+      // 1. Identify unique targets to fetch (Optimistic Deduplication)
+      const targetsToFetch: { id: string; relationship: any }[] = [];
+
       for (const relationship of relationships) {
-        // Determine the related memory ID (could be from or to)
         const relatedMemoryId =
           relationship.from_memory_id === memoryId
             ? relationship.to_memory_id
             : relationship.from_memory_id;
 
-        // Skip if we've already seen this memory (deduplication)
-        if (seenMemoryIds.has(relatedMemoryId)) {
-          continue;
+        if (!seenMemoryIds.has(relatedMemoryId)) {
+          seenMemoryIds.add(relatedMemoryId);
+          targetsToFetch.push({ id: relatedMemoryId, relationship });
         }
+      }
 
-        // Fetch the related memory
-        const memoryResult = await this.storageClient.getMemory(relatedMemoryId, workspaceId);
+      // 2. Fetch all identified memories in parallel
+      const fetchPromises = targetsToFetch.map(async ({ id, relationship }) => {
+        const memoryResult = await this.storageClient.getMemory(id, workspaceId);
 
         if (!memoryResult.ok) {
           this.logger.warn('Failed to fetch related memory', {
-            memoryId: sanitizeForLogging(relatedMemoryId, 50),
+            memoryId: sanitizeForLogging(id, 50),
             workspaceId: sanitizeForLogging(workspaceId, 50),
             error: sanitizeError(memoryResult.error),
           });
-          continue;
+          return null;
         }
 
         const relatedMemory = memoryResult.value;
-
-        // Skip if memory doesn't exist
         if (!relatedMemory) {
           this.logger.warn('Related memory not found', {
-            memoryId: sanitizeForLogging(relatedMemoryId, 50),
+            memoryId: sanitizeForLogging(id, 50),
             workspaceId: sanitizeForLogging(workspaceId, 50),
           });
-          continue;
+          return null;
         }
 
-        // Mark this memory as seen
-        seenMemoryIds.add(relatedMemoryId);
-
-        // Add to related memories
-        relatedMemories.push({
+        return {
           memory: relatedMemory,
           relationship,
           depth: currentDepth,
-        });
+        } as RelatedMemory;
+      });
 
-        // Recursively fetch relationships for this memory if we haven't reached max depth
-        if (currentDepth < maxDepth) {
-          const nestedRelated = await this.fetchRelatedMemories(
-            relatedMemoryId,
+      const fetchedResults = await Promise.all(fetchPromises);
+      const validMemories = fetchedResults.filter((r): r is RelatedMemory => r !== null);
+
+      // 3. Recursively fetch deeper relationships in parallel
+      if (currentDepth < maxDepth && validMemories.length > 0) {
+        const recursivePromises = validMemories.map(item =>
+          this.fetchRelatedMemories(
+            item.memory.id,
             workspaceId,
             maxDepth,
             seenMemoryIds,
             currentDepth + 1
-          );
+          )
+        );
 
-          // Add nested related memories to the list
-          relatedMemories.push(...nestedRelated);
+        const nestedResults = await Promise.all(recursivePromises);
+
+        // Flatten nested results into our list
+        for (const nested of nestedResults) {
+          validMemories.push(...nested);
         }
       }
+
+      return validMemories;
+
     } catch (error) {
       this.logger.error('Unexpected error fetching related memories', {
         memoryId: sanitizeForLogging(memoryId, 50),
         workspaceId: sanitizeForLogging(workspaceId, 50),
         error: sanitizeError(error),
       });
+      return [];
     }
-
-    return relatedMemories;
   }
 
   /**
