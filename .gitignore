@@ -91,3 +91,4 @@ apps/ghost/backend/memory.db-journal
 apps/ghost/backend/vectors/
 apps/handoff/backend/.wrangler/
 apps/handoff/backend/backfill.log
+apps/handoff/backend/tmp/
