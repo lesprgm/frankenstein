@@ -107,6 +107,12 @@ apps/ghost/daemon/apps/
 chat.html
 chatgpt.html
 
+# Demo files
+apps/ghost/DEMO_GUIDE.md
+apps/ghost/backend/scripts/*demo*.ts
+packages/core/memory-extraction/examples/*demo*.ts
+packages/core/memory-extraction/examples/*DEMO*.md
+
 # SQLite temp files created during local runs
 *.db-shm
 *.db-wal

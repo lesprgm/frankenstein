@@ -4,15 +4,7 @@
 
 Ghost is a voice-controlled AI that lives on your Mac, sees your screen, remembers your context, and acts on your local environment. Built for power users, and anyone who wants a truly personal AI assistant that respects privacy while delivering cutting-edge multi-modal intelligence.
 
-<iframe
-  width="560"
-  height="315"
-  src="https://www.youtube.com/embed/Vx8o01rarzM?start=102"
-  title="Ghost Demo Video"
-  frameborder="0"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-  allowfullscreen
-></iframe>
+[![Watch the Ghost demo](https://img.youtube.com/vi/Vx8o01rarzM/hqdefault.jpg)](https://youtu.be/Vx8o01rarzM?t=102)
 
 - **Screen-Aware**: Sees your screen using macOS Vision framework (local OCR, never sends raw images)
 -  **Persistent Memory**: Remembers every screen and conversation for semantic recall
