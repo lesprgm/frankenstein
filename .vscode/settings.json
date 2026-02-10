@@ -1,3 +1,6 @@
 {
-    "kiroAgent.configureMCP": "Disabled"
+    "kiroAgent.configureMCP": "Disabled",
+    "files.associations": {
+        "apps/ghost/**/*.sql": "sqlite"
+    }
 }

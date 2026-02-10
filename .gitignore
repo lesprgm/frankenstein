@@ -92,3 +92,21 @@ apps/ghost/backend/vectors/
 apps/handoff/backend/.wrangler/
 apps/handoff/backend/backfill.log
 apps/handoff/backend/tmp/
+
+# Local performance testing / scratch artifacts
+apps/ghost/benchmark/
+test/
+test-data/
+packages/core/memory-extraction/examples/maker-*-test.ts
+packages/core/memory-extraction/src/scripts/benchmark-*.ts
+examples/data-*-batch-*/
+apps/handoff/frontend/debug_output.txt
+apps/handoff/frontend/entity_debug.txt
+apps/handoff/backend/sample-conversations.json
+apps/ghost/daemon/apps/
+chat.html
+chatgpt.html
+
+# SQLite temp files created during local runs
+*.db-shm
+*.db-wal
