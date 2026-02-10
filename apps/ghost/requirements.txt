@@ -1,0 +1,2 @@
+# Ghost is implemented in Node.js (backend/daemon/dashboard). A Python runtime is not required.
+# This file exists to satisfy tooling that expects a requirements.txt; leave empty or add optional Python helpers here.

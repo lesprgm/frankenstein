@@ -32,6 +32,14 @@ Voice-activated AI assistant daemon that runs locally on your Mac with multi-mod
 - **Notifications**: Desktop notifications for results
 - **File Indexing**: Scans configured directories for context
 
+### Self-Improving Intent Classification
+Ghost uses a local semantic router to understand your intent (e.g., "solve this" vs "stop listening").
+It learns from "near misses" to improve over time.
+
+1. **Automatic Collection**: If Ghost is unsure about a command (score 0.25 - 0.40), it saves it as a suggestion.
+2. **Review Workflow**: Run `npm run train:review` to interactively approve or reject these suggestions.
+3. **Auto-Update**: Approved suggestions are automatically added to the source code to improve future accuracy.
+
 ### AI Explainability
 - **Memory Graph Notifications**: Shows reasoning path
 - **Deep Links**: Opens dashboard to visualization

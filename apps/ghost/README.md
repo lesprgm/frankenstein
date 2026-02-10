@@ -4,6 +4,16 @@
 
 Ghost is a voice-controlled AI that lives on your Mac, sees your screen, remembers your context, and acts on your local environment. Built for power users, and anyone who wants a truly personal AI assistant that respects privacy while delivering cutting-edge multi-modal intelligence.
 
+<iframe
+  width="560"
+  height="315"
+  src="https://www.youtube.com/embed/Vx8o01rarzM?start=102"
+  title="Ghost Demo Video"
+  frameborder="0"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+  allowfullscreen
+></iframe>
+
 - **Screen-Aware**: Sees your screen using macOS Vision framework (local OCR, never sends raw images)
 -  **Persistent Memory**: Remembers every screen and conversation for semantic recall
 - 🎙️ **Voice-First**: Global hotkey + "Hey Ghost" wake word for instant access
@@ -59,6 +69,13 @@ Ghost doesn't just process commands; it **remembers**. Built on a local SQLite +
 - **Relationships**: Links between memories for contextual recall
 - **Screen Context**: Visual snapshots tied to specific moments
 
+### **Active Context & Local Actions**
+Ghost is deeply integrated with your macOS environment:
+- **Active Window Tracking**: Knows which app you are using (e.g., "VS Code", "Chrome")
+- **Clipboard Awareness**: Can read your clipboard content when asked
+- **Universal App Launcher**: "Open Spotify", "Open VS Code", "Open that URL"
+- **Safety First**: Strict protocol whitelisting prevents malicious command execution
+
 ### **Voice-First Interaction**
 - **Global Hotkey**: `Option+Space` (macOS) to talk instantly
 - **Wake Word**: Say "Hey Ghost" (or "Hi Ghost", "Hello Ghost") for hands-free activation
@@ -68,14 +85,15 @@ Ghost doesn't just process commands; it **remembers**. Built on a local SQLite +
 
 ### **AI Explainability** ("Why Ghost Did This")
 Ghost is not a black box. When it recalls information, it tells you why.
-- **Source Popup Overlay**: See sources inline with confidence bars and scroll-to-context
+- **Source Attribution**: "Context: meeting_notes.txt" (High Confidence) vs "General Knowledge" (Low Confidence)
+- **Quiet Mode**: Suppresses overlay popups for general knowledge answers to keep your flow uninterrupted
 - **Command Detail View**: Deep dive into any command with full memory graph
 - **Interactive Memory Graph**: Click to see a D3.js force-directed graph of the reasoning path
-- **Timeline View**: See the sequence of memories used to answer your question
 
 ### **Local Control**
 Ghost acts on your computer:
 - **File Operations**: "Open the latest PDF in Downloads"
+- **App Launching**: "Open Terminal", "Open Slack" (uses `system.open` with safety checks)
 - **Navigation**: "Scroll down", "Go to the next page"
 - **App Control**: Launch apps and manage windows
 
@@ -238,16 +256,34 @@ npm test
 
 **Test Coverage:**
 - **Backend:** 98/98 tests passing
-- **Daemon:** 57/62 tests passing
+- **Daemon:** 103/103 tests passing
 -  Visual Memory
 -  Memory Consolidation
 -  E2E Flows
 -  LLM Integration
+-  Safety & Protocol Filtering
 
 ---
 
 ## Troubleshooting
 
+### **Doctor Script**
+If you encounter issues, run the built-in diagnostic tool:
+```bash
+npm run doctor --prefix apps/ghost/daemon
+```
+This checks:
+- Node.js version
+- Environment variables (.env)
+- Database permissions
+- Backend connectivity
+
+### **Logs**
+For deeper debugging, check the local log files:
+- **Daemon Logs**: `~/.ghost/logs/ghost.log` (Rotates daily)
+- **Backend Logs**: Output to terminal (or use `pm2` logs if deployed)
+
+### Common Issues
 - **Port 4000 in use**: `lsof -ti :4000 | xargs kill -9`
 - **Backend Offline**: Check `daemon/config.json` backend URL
 - **Voice Issues**: Check microphone permissions in System Settings

@@ -31,7 +31,8 @@
     "hotkey": "Alt+Space",
     "silenceThreshold": 0.01,
     "maxRecordingDuration": 15000,
-    "chimeSound": ""
+    "chimeSound": "",
+    "wakeWordEnabled": false
   },
   "files": {
     "scanDirectories": [

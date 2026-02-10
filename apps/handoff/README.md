@@ -4,6 +4,16 @@
 
 Handoff imports your conversations from ChatGPT and other AI providers, extracts a structured knowledge graph, and lets you reuse that context anywhere—through an in-app assistant or concise context blocks you can paste into any LLM.
 
+<iframe
+  width="560"
+  height="315"
+  src="https://www.youtube.com/embed/Vx8o01rarzM?start=35"
+  title="Handoff Demo Video"
+  frameborder="0"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+  allowfullscreen
+></iframe>
+
 - 📥 **Import**: Bring conversations from ChatGPT (via official export) into your own database
 - 🧠 **Extract**: MemoryLayer builds structured entities, facts, and decisions from raw chats
 - 🔄 **Reuse**: Query memories in-app or generate smart context blocks for any LLM
