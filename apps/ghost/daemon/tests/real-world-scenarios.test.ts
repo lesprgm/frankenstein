@@ -1,8 +1,31 @@
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { ActivationServer } from '../src/services/activation-server';
+import { describe, it, expect, vi } from 'vitest';
+import { createActivationRequestHandler } from '../src/services/activation-server';
+import { createMockRequest, createMockResponse, asServerResponse } from './activation-server-helpers';
+
+// Mock IntentClassifier to avoid loading models
+vi.mock('../src/voice/intent-classifier', () => ({
+    UserIntent: {
+        INTRODUCTION: 'introduction',
+        CHAT_MODE: 'chat_mode',
+        ACTION_MODE: 'action_mode',
+        SCREEN_CONTEXT: 'screen_context',
+        SYSTEM_CONTROL: 'system_control',
+        UNKNOWN: 'unknown'
+    },
+    IntentClassifier: {
+        classify: vi.fn().mockImplementation(async (text: string) => {
+            const lower = text.toLowerCase();
+            if (lower.includes('who are you') || lower.includes('tell me about yourself')) {
+                return 'introduction';
+            }
+            return 'unknown';
+        }),
+        getIntroduction: vi.fn().mockReturnValue("I'm Ghost. Leslie's personal AI assistant, running locally and powered by Memory Layer.")
+    }
+}));
+
 import { IntentClassifier, UserIntent } from '../src/voice/intent-classifier';
-import http from 'http';
 
 // Mock dependencies
 const mockSpeak = vi.fn();
@@ -10,7 +33,7 @@ const mockToast = vi.fn();
 
 // Simulate the logic in main.ts
 async function handleVoiceCommand(transcript: string) {
-    const intent = IntentClassifier.classify(transcript);
+    const intent = await IntentClassifier.classify(transcript);
 
     if (intent === UserIntent.INTRODUCTION) {
         const text = IntentClassifier.getIntroduction();
@@ -23,29 +46,21 @@ async function handleVoiceCommand(transcript: string) {
 describe('Real-World Scenarios', () => {
 
     describe('Scenario 1: User Activates via Dashboard', () => {
-        let server: ActivationServer;
-        const PORT = 3848; // Use a different port for testing
         const mockHandleHotkey = vi.fn().mockResolvedValue(undefined);
-
-        afterEach(() => {
-            if (server) server.stop();
-        });
 
         it('should successfully trigger Ghost when "Listen" button is clicked', async () => {
             // 1. Setup: Ghost Daemon is running with Activation Server
-            server = new ActivationServer(PORT, mockHandleHotkey);
-            server.start();
-            await new Promise(resolve => setTimeout(resolve, 50)); // Wait for start
+            const handler = createActivationRequestHandler(mockHandleHotkey);
+            const req = createMockRequest('POST', '/activate');
+            const res = createMockResponse();
 
             // 2. Action: User clicks "Listen" on Dashboard (simulated HTTP POST)
-            const response = await fetch(`http://localhost:${PORT}/activate`, {
-                method: 'POST'
-            });
-            const data = await response.json();
+            handler(req, asServerResponse(res));
+            const data = JSON.parse(res.body ?? '{}');
 
             // 3. Verification: 
             // - Server returns success
-            expect(response.status).toBe(200);
+            expect(res.statusCode).toBe(200);
             expect(data).toHaveProperty('success', true);
 
             // - Ghost's hotkey handler is actually triggered

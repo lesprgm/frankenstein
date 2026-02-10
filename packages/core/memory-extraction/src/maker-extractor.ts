@@ -44,26 +44,38 @@ async function runExtractionMicroagents(
     llmProvider: MakerLLMProvider
 ): Promise<string[]> {
     const prompt = buildExtractionPrompt(sourceText);
-    const calls: Promise<string>[] = [];
+    const outputs: string[] = [];
+    // Default to sequential to respect low-rate quotas; opt-out with MAKER_SEQUENTIAL=false
+    const sequential = process.env.MAKER_SEQUENTIAL !== 'false';
+    const defaultDelay = sequential ? 1000 : 0;
+    const sequentialDelay = parseInt(process.env.MAKER_SEQUENTIAL_DELAY_MS || `${defaultDelay}`, 10);
 
-    console.log(`[MAKER] Launching ${makerConfig.replicas} microagents...`);
+    console.log(`[MAKER] Launching ${makerConfig.replicas} microagents${sequential ? ' (sequential)' : ''}...`);
 
-    for (let i = 0; i < makerConfig.replicas; i++) {
-        calls.push(
-            llmProvider
-                .call(prompt, {
-                    temperature: makerConfig.temperature,
-                    timeout: makerConfig.timeout,
-                })
-                .catch((error) => {
-                    console.warn(`[MAKER] Microagent ${i + 1} failed:`, error.message);
-                    return ''; // Return empty string on failure
-                })
+    const runAgent = async (idx: number) => {
+        try {
+            const resp = await llmProvider.call(prompt, {
+                temperature: makerConfig.temperature,
+                timeout: makerConfig.timeout,
+            });
+            outputs.push(resp);
+        } catch (error: any) {
+            console.warn(`[MAKER] Microagent ${idx + 1} failed:`, error?.message || error);
+        }
+    };
+
+    if (sequential) {
+        for (let i = 0; i < makerConfig.replicas; i++) {
+            await runAgent(i);
+            if (sequentialDelay > 0 && i < makerConfig.replicas - 1) {
+                await new Promise((r) => setTimeout(r, sequentialDelay));
+            }
+        }
+    } else {
+        await Promise.all(
+            Array.from({ length: makerConfig.replicas }, (_v, i) => runAgent(i))
         );
     }
-
-    // Run in parallel – keeps latency ≈ single call
-    const outputs = await Promise.all(calls);
 
     // Filter out failed calls (empty strings)
     return outputs.filter((output) => output.trim().length > 0);

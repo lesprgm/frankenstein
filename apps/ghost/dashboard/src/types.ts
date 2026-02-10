@@ -25,8 +25,19 @@ export type Command = CommandEntry;
 
 
 export interface Action {
-  type: 'file.open' | 'file.scroll' | 'info.recall' | 'info.summarize';
+  type:
+    | 'file.open'
+    | 'file.scroll'
+    | 'file.index'
+    | 'info.recall'
+    | 'info.summarize'
+    | 'reminder.create'
+    | 'search.query'
+    | 'system.open'
+    | 'system.type';
   params: Record<string, any>;
+  confidence?: number;
+  requires_confirmation?: boolean;
 }
 
 export interface MemoryReference {

@@ -65,17 +65,21 @@ describe('WindowManager', () => {
     it('should create overlay window', () => {
         const window = windowManager.createOverlayWindow();
         expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining({
-            width: 240, // Reduced from 300 for more compact display
+            width: 360, // Increased for better readability
             height: 100, // Minimum height so overlay is visible even if resize fails
             useContentSize: true,
             frame: false,
             transparent: true,
             alwaysOnTop: true,
+            show: false,
+            skipTaskbar: true,
+            resizable: false,
+            hasShadow: false,
         }));
-        // Check positioning logic (width - 340)
-        // 1920 - 340 = 1580
+        // Check positioning logic (width - 380)
+        // 1920 - 380 = 1540
         expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining({
-            x: 1580,
+            x: 1540,
             y: 40,
         }));
         expect(window.loadFile).toHaveBeenCalled();
@@ -87,13 +91,13 @@ describe('WindowManager', () => {
 
         // Test normal resize
         windowManager.resizeOverlay(200);
-        expect(window.setContentSize).toHaveBeenCalledWith(240, 200); // Width reduced to 240
-        // 1920 - 240 - 20 = 1660
-        expect(window.setPosition).toHaveBeenCalledWith(1660, 40);
+        expect(window.setContentSize).toHaveBeenCalledWith(360, 200);
+        // 1920 - 360 - 20 = 1540
+        expect(window.setPosition).toHaveBeenCalledWith(1540, 40);
 
         // Test max height constraint (0.8 * 1080 = 864)
         windowManager.resizeOverlay(1000);
-        expect(window.setContentSize).toHaveBeenCalledWith(240, 864); // Width reduced to 240
+        expect(window.setContentSize).toHaveBeenCalledWith(360, 864);
     });
 
     it('should show overlay with sources and apiKey', async () => {
@@ -105,11 +109,14 @@ describe('WindowManager', () => {
 
         // Wait for the did-finish-load callback to fire
         await vi.waitFor(() => {
-            expect(window.webContents.send).toHaveBeenCalledWith('update-sources', {
-                sources,
-                commandId: 'cmd-123',
-                apiKey
-            });
+            expect(window.webContents.send).toHaveBeenCalledWith(
+                'update-sources',
+                expect.objectContaining({
+                    sources,
+                    commandId: 'cmd-123',
+                    apiKey,
+                })
+            );
         });
         expect(window.showInactive).toHaveBeenCalled();
     });

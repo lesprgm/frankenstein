@@ -33,7 +33,10 @@ import { ChunkDeduplicator } from './chunking/deduplicator.js';
 import { SlidingWindowStrategy } from './chunking/strategies/sliding-window.js';
 import { ConversationBoundaryStrategy } from './chunking/strategies/conversation-boundary.js';
 import { SemanticStrategy } from './chunking/strategies/semantic.js';
+import { MakerStrategy } from './strategies/maker-strategy.js';
 import type { ChunkingConfig, ChunkingStrategy as IChunkingStrategy } from './chunking/types.js';
+
+export { MakerStrategy };
 
 /**
  * Main MemoryExtractor class for extracting memories from conversations
