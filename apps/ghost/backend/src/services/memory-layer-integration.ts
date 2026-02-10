@@ -2,7 +2,7 @@ import { MemoryExtractor } from '@memorylayer/memory-extraction';
 import { ContextEngine } from '@memorylayer/context-engine';
 import { ChatCapture } from '@memorylayer/chat-capture';
 import { LocalStorageClient } from '../adapters/local-storage-client.js';
-import { LocalEmbeddingProvider } from '../adapters/local-embedding-provider.js';
+import { WorkerEmbeddingProvider } from '../adapters/worker-embedding-provider.js';
 import { SingleUserManager } from '../adapters/single-user-manager.js';
 import { initializeDatabase } from '../db/migrations.js';
 
@@ -21,7 +21,7 @@ class OpenRouterProvider {
         this.timeout = opts.timeout ?? 60000;
     }
 
-    async call(prompt: string, _options?: { temperature?: number; timeout?: number }): Promise<string> {
+    async complete(prompt: string, options?: { temperature?: number; timeout?: number; maxTokens?: number; model?: string }): Promise<string> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this.timeout);
         try {
@@ -32,9 +32,11 @@ class OpenRouterProvider {
                     'Authorization': `Bearer ${this.apiKey}`,
                 },
                 body: JSON.stringify({
-                    model: this.model,
+                    model: options?.model || this.model,
                     messages: [{ role: 'user', content: prompt }],
                     stream: false,
+                    temperature: options?.temperature,
+                    max_tokens: options?.maxTokens,
                 }),
                 signal: controller.signal,
             });
@@ -44,7 +46,7 @@ class OpenRouterProvider {
                 throw new Error(`OpenRouter error ${res.status}: ${text || res.statusText}`);
             }
 
-            const data = await res.json();
+            const data = await res.json() as any;
             const content = data?.choices?.[0]?.message?.content;
             if (!content) throw new Error('OpenRouter response missing content');
             return content;
@@ -79,7 +81,7 @@ class OpenRouterProvider {
                 throw new Error(`OpenRouter structured error ${res.status}: ${text || res.statusText}`);
             }
 
-            const data = await res.json();
+            const data = await res.json() as any;
             const content = data?.choices?.[0]?.message?.content;
             if (!content) throw new Error('OpenRouter response missing content');
             try {
@@ -98,14 +100,14 @@ class OpenRouterProvider {
  */
 class MultiProvider {
     private providers: Array<{
-        call: (prompt: string, options?: { temperature?: number; timeout?: number }) => Promise<string>;
-        completeStructured?: (prompt: string, schema: any, options?: { temperature?: number; timeout?: number }) => Promise<any>;
+        complete: (prompt: string, options?: any) => Promise<string>;
+        completeStructured?: (prompt: string, schema: any, options?: any) => Promise<any>;
     }>;
     private idx = 0;
 
     constructor(providers: Array<{
-        call: (prompt: string, options?: { temperature?: number; timeout?: number }) => Promise<string>;
-        completeStructured?: (prompt: string, schema: any, options?: { temperature?: number; timeout?: number }) => Promise<any>;
+        complete: (prompt: string, options?: any) => Promise<string>;
+        completeStructured?: (prompt: string, schema: any, options?: any) => Promise<any>;
     }>) {
         this.providers = providers.filter(Boolean);
         if (this.providers.length === 0) {
@@ -113,12 +115,12 @@ class MultiProvider {
         }
     }
 
-    async call(prompt: string, options?: { temperature?: number; timeout?: number }): Promise<string> {
+    async complete(prompt: string, options?: any): Promise<string> {
         let lastError: any = null;
         for (let i = 0; i < this.providers.length; i++) {
             const provider = this.providers[(this.idx + i) % this.providers.length];
             try {
-                const result = await provider.call(prompt, options);
+                const result = await provider.complete(prompt, options);
                 // advance round robin pointer
                 this.idx = (this.idx + i + 1) % this.providers.length;
                 return result;
@@ -130,7 +132,7 @@ class MultiProvider {
         throw lastError || new Error('All providers failed');
     }
 
-    async completeStructured(prompt: string, schema: any, options?: { temperature?: number; timeout?: number }): Promise<any> {
+    async completeStructured(prompt: string, schema: any, options?: any): Promise<any> {
         let lastError: any = null;
         for (let i = 0; i < this.providers.length; i++) {
             const provider = this.providers[(this.idx + i) % this.providers.length];
@@ -155,7 +157,7 @@ class MultiProvider {
  */
 export class MemoryLayerIntegration {
     public storageClient: LocalStorageClient;
-    public embeddingProvider: LocalEmbeddingProvider;
+    public embeddingProvider: WorkerEmbeddingProvider;
     public singleUserManager: SingleUserManager;
     public memoryExtractor: MemoryExtractor | null = null;
     public contextEngine: ContextEngine | null = null;
@@ -174,7 +176,7 @@ export class MemoryLayerIntegration {
         } else {
             this.storageClient = new LocalStorageClient(db);
         }
-        this.embeddingProvider = new LocalEmbeddingProvider();
+        this.embeddingProvider = new WorkerEmbeddingProvider();
         this.singleUserManager = new SingleUserManager(db);
     }
 
@@ -226,7 +228,7 @@ export class MemoryLayerIntegration {
         // Initialize MemoryExtractor with chunking enabled for file ingestion
         if (!this.memoryExtractor) {
             const providerName = (process.env.MEMORY_PROVIDER || 'gemini').toLowerCase();
-            const { StructuredOutputStrategy } = await import('@memorylayer/memory-extraction');
+            const { StructuredOutputStrategy, MakerStrategy } = await import('@memorylayer/memory-extraction');
             let provider: any = null;
 
             const canUseOpenRouter = !!process.env.OPENROUTER_API_KEY && !!process.env.OPENROUTER_MODEL;
@@ -272,7 +274,14 @@ export class MemoryLayerIntegration {
                 });
             }
 
-            const strategy = new StructuredOutputStrategy();
+            const useMaker = process.env.MAKER_ENABLED !== 'false' && !!process.env.MAKER_ENABLED;
+            let strategy;
+            if (useMaker) {
+                console.log('[MemoryLayer] Using MAKER extraction strategy');
+                strategy = new MakerStrategy();
+            } else {
+                strategy = new StructuredOutputStrategy();
+            }
 
             this.memoryExtractor = new (await import('@memorylayer/memory-extraction')).MemoryExtractor({
                 provider,
@@ -320,6 +329,15 @@ export class MemoryLayerIntegration {
      */
     isInitialized(): boolean {
         return this.initialized;
+    }
+
+    /**
+     * Cleanup resources (workers, connections)
+     */
+    async close(): Promise<void> {
+        if (this.embeddingProvider) {
+            await this.embeddingProvider.terminate();
+        }
     }
 }
 

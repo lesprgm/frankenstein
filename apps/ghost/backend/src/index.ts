@@ -45,6 +45,10 @@ import searchRoutes from './routes/search.js';
 import openFileRoutes from './routes/open-file.js';
 import activateRoutes from './routes/activate.js';
 import summarizeContextRoutes from './routes/summarize-context.js';
+import { pruningService } from './services/pruning-service.js';
+
+// Run pruning on startup
+pruningService.prune().catch(err => console.error('Startup pruning failed:', err));
 
 // API routes
 app.route('/api/command', commandRoutes);

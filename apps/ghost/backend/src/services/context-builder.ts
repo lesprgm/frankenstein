@@ -191,7 +191,11 @@ export class ContextBuilder {
   }
 
   private isConversationMemory(type: string): boolean {
-    return type.startsWith('fact.response') || type.startsWith('fact.command');
+    return (
+      type.startsWith('fact.response') ||
+      type.startsWith('fact.command') ||
+      type.startsWith('fact.pending_action')
+    );
   }
 
   /**

@@ -108,7 +108,7 @@ export class MemoryService {
         }
       });
 
-      this.store.addMemories(
+      await this.store.addMemories(
         memories.map((mem) => ({
           ...mem,
           createdAt: new Date().toISOString(),

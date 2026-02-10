@@ -1,9 +1,10 @@
 import path from 'node:path';
-import type { Action, LLMResponse, MemoryReference, FileOpenParams } from '../types.js';
+import type { Action, LLMResponse, MemoryReference, FileOpenParams, CommandRequest } from '../types.js';
 
 const DEFAULT_MODEL = 'gemini-2.0-flash-exp';
 const DEFAULT_ENDPOINT_FOR = (model: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+const DEFAULT_LLM_TIMEOUT_MS = 10000;
 
 /**
  * LLM coordinator — Gemini-only configuration.
@@ -35,7 +36,9 @@ export class LLMCoordinator {
     context: string,
     memories: MemoryReference[],
     screenContext?: string,
-    conversationalMode?: boolean
+    conversationalMode?: boolean,
+    systemContext?: CommandRequest['system_context'],
+    commandId?: string
   ): Promise<LLMResponse> {
     if (!this.hasApi || !this.endpoint) {
       const fb = this.fallback(commandText, memories);
@@ -52,8 +55,12 @@ export class LLMCoordinator {
       };
     }
 
+    const timeoutMs = this.getLlmTimeoutMs();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      const payload = this.buildGeminiPayload(commandText, context, memories, screenContext, conversationalMode);
+      const payload = this.buildGeminiPayload(commandText, context, memories, screenContext, conversationalMode, systemContext);
 
       // If the API expects API key as query param (Google API key style), append it.
       const apiKey = process.env.GEMINI_API_KEY || '';
@@ -63,7 +70,12 @@ export class LLMCoordinator {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (!useQueryKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-      const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
       if (!resp.ok) {
         console.warn('LLM request failed', resp.status, await resp.text());
         return this.fallback(commandText, memories);
@@ -74,19 +86,29 @@ export class LLMCoordinator {
       if (assistant_text) {
         try {
           const parsed = JSON.parse(assistant_text) as LLMResponse;
-          const withFb = this.withFallbackActions(parsed, commandText, memories);
-          return this.applyMemoryGuard(withFb, commandText, memories);
+          const withFb = this.withFallbackActions(parsed, commandText, memories, conversationalMode);
+          return this.applyMemoryGuard(withFb, commandText, memories, conversationalMode);
         } catch {
-          const withFb = this.withFallbackActions({ assistant_text, actions: [] }, commandText, memories);
-          return this.applyMemoryGuard(withFb, commandText, memories);
+          const withFb = this.withFallbackActions({ assistant_text, actions: [] }, commandText, memories, conversationalMode);
+          return this.applyMemoryGuard(withFb, commandText, memories, conversationalMode);
         }
       }
 
       const fb = this.fallback(commandText, memories);
-      return this.applyMemoryGuard(fb, commandText, memories);
+      return this.applyMemoryGuard(fb, commandText, memories, conversationalMode);
     } catch (err) {
-      console.warn('LLM call failed, using fallback:', err instanceof Error ? err.message : err);
-      return this.applyMemoryGuard(this.fallback(commandText, memories), commandText, memories);
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.warn('[Ghost][LLM] Timeout, using fallback', {
+          commandId,
+          timeoutMs,
+          commandText: commandText.slice(0, 120),
+        });
+      } else {
+        console.warn('LLM call failed, using fallback:', err instanceof Error ? err.message : err);
+      }
+      return this.applyMemoryGuard(this.fallback(commandText, memories), commandText, memories, conversationalMode);
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -170,7 +192,8 @@ export class LLMCoordinator {
     context: string,
     memories: MemoryReference[],
     screenContext?: string,
-    conversationalMode?: boolean
+    conversationalMode?: boolean,
+    systemContext?: CommandRequest['system_context']
   ) {
     const memoryText = memories
       .map(
@@ -226,6 +249,9 @@ export class LLMCoordinator {
       '- "info.summarize" { topic, sources: string[], format: "brief"|"detailed"|"timeline" }: Summarize multiple memories/files.',
       '- "reminder.create" { title, notes?, dueDate? }: Create a reminder.',
       '- "search.query" { query }: Search if you have no relevant memories.',
+      '- "system.open" { target, app? }: Open a URL or application. Use for "open Spotify", "open google.com", etc.',
+      '- "system.type" { text }: Type text into the active application.',
+      '- Actions may optionally include "requires_confirmation": boolean and "confidence": number (0-1).',
       '',
       'CORE RULES:',
       '1. DIRECT ANSWERS: If you have memories that answer the question, answer it directly in "assistant_text". Do NOT say "I found this in..." or "Based on...". Just state the fact.',
@@ -240,6 +266,10 @@ export class LLMCoordinator {
       '10. SCROLL TO CONTEXT: If the user asks to "scroll to" or "show me" a specific part, use "file.open" with the "search" parameter. The "search" value MUST be a unique 5-10 word EXACT QUOTE from the "doc.chunk" memory text.',
       '11. FILE OPEN PRIORITY: If the user says open/show/launch and any memory has a file path, MUST emit "file.open" with that path before other actions. Use "info.recall" only if no actionable file path exists.',
       '12. DO NOT mention file names or paths in assistant_text. Keep it generic: "I just opened the file" or summarize without naming files.',
+      '13. CONTEXT PRIORITY: If the user says "this", "it", or "that" (e.g. "summarize this", "fix this bug"):',
+      '    - FIRST check "System Context > Clipboard". If it contains relevant text/code, use that.',
+      '    - SECOND check "Screen Context". If the clipboard is empty or irrelevant, use the screen OCR.',
+      '    - THIRD check "System Context > Active Window". Use the window title for context.',
       '',
       'EXAMPLE:',
       'User: "What did Sarah say about the API redesign?"',
@@ -268,6 +298,19 @@ export class LLMCoordinator {
       parts.push(screenContext);
     }
 
+    if (systemContext) {
+      parts.push('System Context (Active Window, Accessibility & Clipboard):');
+      if (systemContext.active_window) {
+        parts.push(`Active Window: "${systemContext.active_window.title}" (App: ${systemContext.active_window.app_name})`);
+      }
+      if (systemContext.accessibility) {
+        parts.push(`Focused Element: Role=${systemContext.accessibility.role}, Value="${systemContext.accessibility.value}", Title="${systemContext.accessibility.title}", Description="${systemContext.accessibility.description}"`);
+      }
+      if (systemContext.clipboard) {
+        parts.push(`Clipboard Content: "${systemContext.clipboard}"`);
+      }
+    }
+
     const userPrompt = parts.join('\n');
 
     return {
@@ -291,16 +334,35 @@ export class LLMCoordinator {
     return null;
   }
 
-  private withFallbackActions(response: LLMResponse, commandText: string, memories: MemoryReference[]): LLMResponse {
-    if (response.actions && response.actions.length > 0) {
-      const cleaned = this.chooseAssistantText(response.assistant_text, response.actions);
-      const hasRecall = response.actions.some((a) => a.type === 'info.recall');
+  private getLlmTimeoutMs(): number {
+    const raw = Number(process.env.GHOST_LLM_TIMEOUT_MS);
+    if (Number.isFinite(raw) && raw > 0) return raw;
+    return DEFAULT_LLM_TIMEOUT_MS;
+  }
+
+  private withFallbackActions(
+    response: LLMResponse,
+    commandText: string,
+    memories: MemoryReference[],
+    conversationalMode?: boolean
+  ): LLMResponse {
+    const actions: Action[] = response.actions || [];
+    const cleaned = this.chooseAssistantText(response.assistant_text, actions);
+
+    // In chat mode, preserve the model's response even if it has no actions.
+    if (conversationalMode) {
+      return { assistant_text: cleaned, actions };
+    }
+
+    if (actions.length > 0) {
+      const hasRecall = actions.some((a) => a.type === 'info.recall');
       if (!hasRecall && this.isMetaChatter(cleaned)) {
         const fb = this.fallback(commandText, memories);
         return { ...fb, assistant_text: this.chooseAssistantText(fb.assistant_text, fb.actions) };
       }
-      return { ...response, assistant_text: cleaned };
+      return { assistant_text: cleaned, actions };
     }
+
     const fb = this.fallback(commandText, memories);
     return {
       assistant_text: this.chooseAssistantText(response.assistant_text || fb.assistant_text, fb.actions),
@@ -447,25 +509,41 @@ export class LLMCoordinator {
   /**
    * If we have memories but the LLM returned nothing useful, fall back to deterministic recall.
    */
-  private applyMemoryGuard(response: LLMResponse, commandText: string, memories: MemoryReference[]): LLMResponse {
+  private applyMemoryGuard(
+    response: LLMResponse,
+    commandText: string,
+    memories: MemoryReference[],
+    conversationalMode?: boolean
+  ): LLMResponse {
+    const actions: Action[] = response.actions || [];
+
+    if (conversationalMode) {
+      const cleaned = this.chooseAssistantText(response.assistant_text, actions);
+      if (cleaned) {
+        return { assistant_text: cleaned, actions };
+      }
+      // If we truly got nothing back, fall back to deterministic recall.
+      return this.forceRecallAssistantText(this.fallback(commandText, memories));
+    }
+
     if (!memories || memories.length === 0) {
       return this.forceRecallAssistantText(response);
     }
 
-    const recallSummary = this.getRecallSummary(response.actions);
+    const recallSummary = this.getRecallSummary(actions);
     const hasUsefulRecall =
       recallSummary &&
       !/no memories found/i.test(recallSummary) &&
       !this.isMetaChatter(recallSummary);
 
-    const hasActions = response.actions && response.actions.length > 0;
+    const hasActions = actions.length > 0;
 
     if (!hasActions || !hasUsefulRecall) {
       const fb = this.fallback(commandText, memories);
       return this.forceRecallAssistantText(fb);
     }
 
-    return this.forceRecallAssistantText(response);
+    return this.forceRecallAssistantText({ ...response, actions });
   }
 
   private buildSystemPrompt(): string {
@@ -593,7 +671,7 @@ export class LLMCoordinator {
         .slice(0, 3)
         .map((m) => {
           const date = this.getMemoryDate(m);
-          const iso = isNaN(date) ? '' : new Date(date).toISOString().split('T')[0];
+          const iso = date > 0 ? new Date(date).toISOString().split('T')[0] : '';
           return iso ? `${iso}: ${m.summary}` : m.summary;
         })
         .join(' • ');
@@ -743,7 +821,7 @@ export class LLMCoordinator {
 
       let hint = '';
       if (params.page) hint = ` on page ${params.page}`;
-      else if (params.section) hint = `, jumping to the section`;
+      else if (params.section) hint = `, jumping to the "${params.section}" section`;
       else if (params.lineNumber) hint = ` at the specified line`;
       // Keep assistant_text generic to avoid leaking file names
       assistant_text = `I just opened the file${hint}.`;
