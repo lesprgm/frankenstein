@@ -11,23 +11,43 @@ import { RemindersService } from '../services/reminders';
 import { GhostAPIClient } from '../services/api-client';
 import { fileScanner } from '../files/file-scanner';
 import { showOverlayToast } from '../services/overlay-notifier';
+import { SystemContextService } from '../services/system-context';
 
 /**
  * Executes actions returned by the backend.
  * Supports voice feedback via optional VoiceFeedbackService.
  */
 export class ActionExecutor {
+  private abortController: AbortController | null = null;
+
   constructor(
     private voiceFeedback?: VoiceFeedbackService,
     private explainabilityNotifier?: ExplainabilityNotifier,
     private remindersService?: RemindersService,
-    private apiClient?: GhostAPIClient
+    private apiClient?: GhostAPIClient,
+    private systemContextService?: SystemContextService
   ) { }
+
+  public stop() {
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+  }
 
   async execute(
     action: Action,
     context?: { commandId: string; memories: MemoryReference[]; screenContext?: { text: string; screenshotPath: string } }
   ): Promise<ActionResult> {
+    if (action.requires_confirmation) {
+      return {
+        action,
+        status: 'failed',
+        error: 'Confirmation required',
+        executedAt: new Date().toISOString(),
+      };
+    }
+
     // Provide instant acknowledgment to reduce perceived latency
     if (this.voiceFeedback) {
       const ack = this.voiceFeedback.getAcknowledgment(action);
@@ -62,6 +82,12 @@ export class ActionExecutor {
         break;
       case 'search.query':
         result = await this.searchMemories(action);
+        break;
+      case 'system.open':
+        result = await this.openSystem(action);
+        break;
+      case 'system.type':
+        result = await this.typeText(action);
         break;
       default:
         result = {
@@ -382,7 +408,13 @@ export class ActionExecutor {
 
   private async recallInfo(action: Action, context?: { commandId: string; memories: MemoryReference[]; screenContext?: ScreenContext }): Promise<ActionResult> {
     const executedAt = new Date().toISOString();
-    const summary = action.params.summary as string;
+    const summary = (action.params as any)?.summary as string | undefined;
+    const isSummarize = action.type === 'info.summarize';
+
+    if ((!summary || summary.trim().length === 0) && isSummarize) {
+      // Summaries should be delivered via assistant_text; avoid showing "No summary provided".
+      return { action, status: 'success', executedAt };
+    }
 
     // Demo mode: Check if any of the recalled memories is a reminder
     if (context?.memories) {
@@ -569,6 +601,123 @@ export class ActionExecutor {
         action,
         status: 'failed',
         error: error instanceof Error ? error.message : 'Search failed',
+        executedAt
+      };
+    }
+  }
+
+  private async openSystem(action: Action): Promise<ActionResult> {
+    const { target, app: appName } = action.params;
+    const executedAt = new Date().toISOString();
+
+    // SAFETY CHECK: Validate URL protocol
+    // We only check if it looks like a URL (contains ://) OR starts with javascript:
+    const lowerTarget = target.toLowerCase();
+    if (lowerTarget.startsWith('javascript:')) {
+        return {
+            action,
+            status: 'failed',
+            error: 'Blocked potentially unsafe protocol: javascript',
+            executedAt
+        };
+    }
+
+    if (target.includes('://')) {
+      const protocol = target.split('://')[0].toLowerCase();
+      const ALLOWED_PROTOCOLS = ['http', 'https', 'mailto', 'spotify', 'slack', 'zoommtg', 'vscode', 'notion'];
+      if (!ALLOWED_PROTOCOLS.includes(protocol)) {
+        return {
+          action,
+          status: 'failed',
+          error: `Blocked potentially unsafe protocol: ${protocol}`,
+          executedAt
+        };
+      }
+    }
+
+    try {
+      const open = (await import('open')).default;
+      if (appName) {
+        await open(target, { app: { name: appName } });
+      } else {
+        await open(target);
+      }
+      return { action, status: 'success', executedAt };
+    } catch (error) {
+      return {
+        action,
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+        executedAt
+      };
+    }
+  }
+
+  private async typeText(action: Action): Promise<ActionResult> {
+    const executedAt = new Date().toISOString();
+    if (action.type !== 'system.type') {
+      return { action, status: 'failed', error: 'Invalid action type', executedAt };
+    }
+    
+    const text = action.params.text;
+    if (!text) {
+      return { action, status: 'failed', error: 'No text provided', executedAt };
+    }
+
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
+
+    try {
+      // 1. Get Initial Window for Focus Lock
+      let initialBundleId: string | undefined;
+      if (this.systemContextService) {
+        const context = await this.systemContextService.getContext();
+        initialBundleId = context.activeWindow?.owner?.bundleId;
+      }
+
+      // 2. Chunking for Rate Limiting and Interruption
+      // Chunk size 5 chars, delay 50ms -> ~100 chars/sec
+      const chunkSize = 5; 
+      // Handle newlines properly by not breaking them? Regex . matches everything except newline usually.
+      // Use [\s\S] to match any char.
+      const chunks = text.match(new RegExp(`[\\s\\S]{1,${chunkSize}}`, 'g')) || [];
+
+      for (const chunk of chunks) {
+        // Check Kill Switch
+        if (signal.aborted) {
+          throw new Error('Typing aborted by user');
+        }
+
+        // Check Focus Lock
+        if (this.systemContextService && initialBundleId) {
+           const currentContext = await this.systemContextService.getContext();
+           if (currentContext.activeWindow?.owner?.bundleId !== initialBundleId) {
+             throw new Error('Focus Lock triggered: Active application changed. Typing aborted.');
+           }
+        }
+
+        // Escape double quotes and backslashes for AppleScript
+        const safeText = chunk.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        
+        // Use AppleScript to simulate keystrokes
+        await execAsync(`osascript -e 'tell application "System Events" to keystroke "${safeText}"'`);
+        
+        // Rate Limit Delay
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      
+      this.abortController = null;
+      return {
+        action,
+        status: 'success',
+        executedAt
+      };
+    } catch (error) {
+      this.abortController = null;
+      return {
+        action,
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
         executedAt
       };
     }

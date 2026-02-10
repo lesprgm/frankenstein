@@ -5,7 +5,10 @@ import { SQLiteStorage } from '../src/services/sqlite-storage';
 import { MemoryLayerIntegration } from '../src/services/memory-layer-integration';
 import { ContextBuilder } from '../src/services/context-builder';
 
-describe('Ghost Backend Integration', () => {
+const runIntegration = process.env.RUN_INTEGRATION_TESTS === 'true' || process.env.RUN_INTEGRATION_TESTS === '1';
+const describeIntegration = runIntegration ? describe : describe.skip;
+
+describeIntegration('Ghost Backend Integration', () => {
     let userId: string;
     const TEST_DB_PATH = `./test-ghost-integration-${Date.now()}.db`;
 

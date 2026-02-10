@@ -46,8 +46,10 @@ describe('Ghost Regression Tests - Demo Flows', () => {
         const response = await llmCoordinator.generateResponse('What do we know about Project X?', '', memories);
 
         expect(response.actions).toHaveLength(1);
-        expect(response.actions[0].type).toBe('info.recall');
-        expect((response.actions[0].params as any).summary).toContain('Project X');
+        // Summarization and recall are both acceptable; prefer summarize when available
+        expect(['info.recall', 'info.summarize']).toContain(response.actions[0].type);
+        const summary = (response.actions[0].params as any).summary || (response.actions[0].params as any).topic;
+        expect(summary).toContain('Project X');
     });
 
     it('Flow 4: "Open file from yesterday"', async () => {

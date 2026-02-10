@@ -8,10 +8,12 @@ import { SQLiteStorage } from '../src/services/sqlite-storage';
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghost-embeds-'));
 const dbPath = path.join(tmpDir, 'ghost.db');
 
-// Mock localEmbeddingProvider to return a deterministic vector
-vi.mock('../src/adapters/local-embedding-provider', () => ({
-  localEmbeddingProvider: {
+// Mock worker embedding provider to return deterministic vectors and avoid spawning threads
+vi.mock('../src/adapters/worker-embedding-provider.js', () => ({
+  workerEmbeddingProvider: {
     embed: vi.fn(async (text: string) => Array(5).fill(text.length)),
+    embedBatch: vi.fn(async (texts: string[]) => texts.map((t) => Array(5).fill(t.length))),
+    terminate: vi.fn(),
   },
 }));
 

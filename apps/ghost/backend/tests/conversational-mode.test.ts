@@ -115,5 +115,19 @@ describe('LLMCoordinator conversational mode', () => {
             // In action mode with file memory, should suggest opening
             expect(response.actions.length).toBeGreaterThan(0);
         });
+
+        it('should not force recall actions when chat mode returns only text', () => {
+            const raw = { assistant_text: 'Hey there! What is up?', actions: [] };
+
+            const result = (llm as any).withFallbackActions(
+                raw,
+                'hey',
+                [],
+                true // conversationalMode
+            );
+
+            expect(result.actions).toEqual([]);
+            expect(result.assistant_text).toBe('Hey there! What is up?');
+        });
     });
 });

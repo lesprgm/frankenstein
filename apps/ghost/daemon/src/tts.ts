@@ -12,11 +12,13 @@ export class TextToSpeech {
   constructor(private config: VoiceConfig) {}
   private current?: ChildProcess;
   private queue: Promise<void> = Promise.resolve();
+  private isStopped = false;
 
   /**
    * Speak immediately, interrupting any current speech.
    */
   async speak(text: string): Promise<void> {
+    this.isStopped = false;
     return this.play(text, true);
   }
 
@@ -25,13 +27,17 @@ export class TextToSpeech {
    */
   async speakQueued(text: string): Promise<void> {
     if (!text) return;
-    this.queue = this.queue.then(() => this.play(text, false)).catch((err) => {
+    this.queue = this.queue.then(() => {
+        if (this.isStopped) return;
+        return this.play(text, false);
+    }).catch((err) => {
       console.error('[Ghost][TTS] Queued speech failed', err);
     });
     return this.queue;
   }
 
   stop(): void {
+    this.isStopped = true;
     if (this.current?.pid) {
       this.current.kill();
       this.current = undefined;

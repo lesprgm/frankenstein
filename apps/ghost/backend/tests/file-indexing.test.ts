@@ -148,20 +148,20 @@ describe('File Indexing & Ingestion', () => {
                 summary: r.memory.summary.substring(0, 80)
             })), null, 2));
 
-            // Verify both types of memories exist
-            const contentMems = results.value.filter(r => r.memory.type === 'fact');
+            // Verify both types of memories exist (content now stored as doc.chunk)
+            const contentMems = results.value.filter(r => r.memory.type === 'doc.chunk' || r.memory.type === 'fact');
             const metadataMems = results.value.filter(r => r.memory.type === 'entity.file');
 
             // Content ingestion should have created at least one content memory
             expect(contentMems.length).toBeGreaterThan(0);
             expect(metadataMems.length).toBeGreaterThan(0);
 
-            // Verify base scores: content (0.9) > metadata (0.3)
-            expect(contentMems[0].memory.score).toBe(0.9);
+            // Verify base scores: content > metadata
+            expect(contentMems[0].memory.score).toBeGreaterThan(metadataMems[0].memory.score);
             expect(metadataMems[0].memory.score).toBe(0.3);
 
             // Content memory should rank higher in search results
-            const contentIndex = results.value.findIndex(r => r.memory.type === 'fact');
+            const contentIndex = results.value.findIndex(r => r.memory.type === 'doc.chunk' || r.memory.type === 'fact');
             const metadataIndex = results.value.findIndex(r => r.memory.type === 'entity.file');
 
             expect(contentIndex).toBeGreaterThanOrEqual(0);

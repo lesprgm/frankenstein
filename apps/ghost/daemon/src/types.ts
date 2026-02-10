@@ -44,6 +44,7 @@ export interface VoiceConfig {
   silenceThreshold: number;
   maxRecordingDuration: number;
   chimeSound?: string;
+  wakeWordEnabled?: boolean;
 }
 
 export interface VisionConfig {
@@ -67,6 +68,13 @@ export interface CommandRequest {
   screen_context?: string;
   screenshot_path?: string;
   conversational_mode?: boolean; // When true, use chat personality; when false, use action mode
+  system_context?: {
+    active_window?: {
+      title: string;
+      app_name: string;
+    };
+    clipboard?: string;
+  };
   meta: {
     source: 'voice';
     client_version: string;
@@ -81,8 +89,10 @@ export interface CommandResponse {
 }
 
 export interface Action {
-  type: 'file.open' | 'file.scroll' | 'file.index' | 'info.recall' | 'info.summarize' | 'reminder.create' | 'search.query';
+  type: 'file.open' | 'file.scroll' | 'file.index' | 'info.recall' | 'info.summarize' | 'reminder.create' | 'search.query' | 'system.open' | 'system.type';
   params: Record<string, any>;
+  confidence?: number;
+  requires_confirmation?: boolean;
 }
 
 export interface ActionResult {

@@ -38,6 +38,7 @@ const DEFAULT_CONFIG: DaemonConfig = {
     silenceThreshold: 0.01,
     maxRecordingDuration: 8_000,
     chimeSound: undefined,
+    wakeWordEnabled: false,
   },
   files: {
     scanDirectories: [path.join(process.env.HOME || '', 'Documents')],

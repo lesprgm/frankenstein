@@ -18,6 +18,11 @@ import { ActivationServer } from './services/activation-server';
 import { IntentClassifier, UserIntent } from './voice/intent-classifier';
 import { fileScanner } from './files/file-scanner';
 import { streamChunksIfReady, flushChunks } from './utils/text-processing';
+import { setupGlobalLogger } from './utils/logger';
+import type { ActionResult } from './types';
+
+// Initialize logger immediately
+setupGlobalLogger();
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 if (require('electron-squirrel-startup')) {
@@ -26,6 +31,7 @@ if (require('electron-squirrel-startup')) {
 
 const config = loadConfig();
 const visionConfig = config.vision ?? { enabled: true, captureMode: 'on-demand' as const };
+const voiceConfig = config.voice;
 const api = new GhostAPIClient(config);
 const hotkey = new HotkeyHandler(config.voice.hotkey);
 let tray: TrayType | null = null;
@@ -43,16 +49,26 @@ import { ExplainabilityNotifier } from './services/explainability-notifier';
 import { VisionService } from './services/vision';
 import { RemindersService } from './services/reminders';
 import { attachOverlayWindowManager, showOverlayToast } from './services/overlay-notifier';
+import { SystemContextService } from './services/system-context';
 
 // Create voice feedback service and action executor with TTS support
 const voiceFeedback = new VoiceFeedbackService(textToSpeech);
-const explainabilityNotifier = new ExplainabilityNotifier('http://localhost:5174', windowManager, config.backend.apiKey);
+const dashboardUrl = process.env.DASHBOARD_URL || 'http://localhost:5174';
+const explainabilityNotifier = new ExplainabilityNotifier(dashboardUrl, windowManager, config.backend.apiKey);
 const remindersService = new RemindersService();
-const actionExecutor = new ActionExecutor(voiceFeedback, explainabilityNotifier, remindersService, api);
+const systemContextService = new SystemContextService();
+const actionExecutor = new ActionExecutor(voiceFeedback, explainabilityNotifier, remindersService, api, systemContextService);
 const visionService = new VisionService();
 
 // Conversational mode state (in-session only)
 let conversationalMode = config.conversationalMode ?? false;
+let lastOverlayPayload: {
+  sources: any[];
+  commandId?: string;
+  apiKey?: string;
+  text?: string;
+  actions?: any[];
+} | null = null;
 
 function createTray(): void {
   const base64Icon = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAt8B9JpN5VQAAAAASUVORK5CYII=';
@@ -125,7 +141,10 @@ let isCommandActive = false;
 
 async function handleHotkey(): Promise<void> {
   if (isCommandActive) {
-    console.log('[Ghost] Command already active, ignoring hotkey');
+    console.log('[Ghost] Command active, stopping execution...');
+    actionExecutor.stop();
+    textToSpeech.stop();
+    showOverlayToast('Ghost', 'Stopped');
     return;
   }
   isCommandActive = true;
@@ -156,14 +175,14 @@ async function handleHotkey(): Promise<void> {
     console.log('[Ghost][PERF] 🎤 Recording started');
 
     // Show listening indicator with waveform
-    showOverlayToast('Ghost', 'Listening...', 10000, 'listening', true);
+    showOverlayToast('Ghost', 'Listening...', 10000, 'status', true);
 
     const audio = await voicePipeline.recordOnce();
     const recordDuration = Date.now() - recordStart;
     console.log(`[Ghost][PERF] ✅ Recording completed in ${recordDuration}ms`);
 
     // Update toast to processing state (stops waveform)
-    showOverlayToast('Ghost', 'Processing...', 10000, 'listening', false);
+    showOverlayToast('Ghost', 'Transcribing...', 10000, 'status', false);
 
     // Stage 3: Speech-to-Text
     const sttStart = Date.now();
@@ -180,7 +199,7 @@ async function handleHotkey(): Promise<void> {
     console.info('[Ghost] Transcript captured:', transcript.value);
 
     // Classify user intent
-    const intent = IntentClassifier.classify(transcript.value);
+    const intent = await IntentClassifier.classify(transcript.value);
 
     // Handle Introduction
     if (intent === UserIntent.INTRODUCTION) {
@@ -222,7 +241,7 @@ async function handleHotkey(): Promise<void> {
     const shouldCapturePostStt =
       visionConfig.enabled &&
       visionConfig.captureMode === 'on-demand' &&
-      (IntentClassifier.classify(transcript.value) === UserIntent.SCREEN_CONTEXT);
+      (intent === UserIntent.SCREEN_CONTEXT);
     if (!screenCapturePromise && shouldCapturePostStt) {
       const visionPostStart = Date.now();
       console.log('[Ghost][PERF] 📸 Vision capture started (on-demand)');
@@ -245,31 +264,44 @@ async function handleHotkey(): Promise<void> {
       console.info('[Ghost] Screenshot saved to:', screenshotPath);
     }
 
-    // Stage 5: LLM API Call (streaming)
+        // Stage 5: LLM API Call (streaming)
     const apiStart = Date.now();
     console.log('[Ghost][PERF] 🤖 LLM API call started (streaming)');
 
+    // Capture System Context (Window + Clipboard)
+    const systemContext = await systemContextService.getContext();
+
+    // Buffer for TTS
     const tokenBuffer: string[] = [];
     let hasStreamed = false;
-    let firstTokenTime: number | null = null;
+    let isFirstChunk = true;
+
+    // Enable Barge-in (Listen while speaking)
+    let stopBargeIn: (() => void) | undefined;
+    if (voiceConfig.wakeWordEnabled) {
+        stopBargeIn = voicePipeline.listenForInterruption(() => {
+            console.log('[Ghost] 🛑 User interrupted TTS (Barge-in)');
+            textToSpeech.stop();
+            // Optional: Visual feedback
+            showOverlayToast('Ghost', 'Listening...');
+        });
+    }
+
+    showOverlayToast('Ghost', 'Thinking...', 10000, 'status', false);
 
     let commandResult = await api.sendCommandStream(
       transcript.value,
       (token) => {
-        if (firstTokenTime === null) {
-          firstTokenTime = Date.now();
-          const ttft = firstTokenTime - apiStart;
-          console.log(`[Ghost][PERF] ⚡ Time to first token: ${ttft}ms`);
-        }
+        // Stream token to TTS buffer
         tokenBuffer.push(token);
         if (streamChunksIfReady(tokenBuffer, textToSpeech)) {
           hasStreamed = true;
         }
-        console.info('[Ghost][LLM][token]', token);
       },
       screenContext,
       screenshotPath,
-      conversationalMode
+      conversationalMode,
+      systemContext
     );
 
     const apiDuration = Date.now() - apiStart;
@@ -279,12 +311,13 @@ async function handleHotkey(): Promise<void> {
       console.warn('[Ghost] Streaming failed, falling back to non-streaming', commandResult.error);
       const fallbackStart = Date.now();
       console.log('[Ghost][PERF] 🔄 Fallback API call started');
-      commandResult = await api.sendCommand(transcript.value, screenContext, screenshotPath, conversationalMode);
+      commandResult = await api.sendCommand(transcript.value, screenContext, screenshotPath, conversationalMode, systemContext);
       const fallbackDuration = Date.now() - fallbackStart;
       console.log(`[Ghost][PERF] ✅ Fallback API completed in ${fallbackDuration}ms`);
     }
 
     if (!commandResult.ok) {
+      if (stopBargeIn) stopBargeIn();
       notifyError('Backend offline', 'Could not reach Ghost backend');
       return;
     }
@@ -294,10 +327,23 @@ async function handleHotkey(): Promise<void> {
     // Stage 6: TTS Completion
     const ttsStart = Date.now();
     await flushChunks(tokenBuffer, textToSpeech, response.assistant_text, hasStreamed);
+    
+    // Stop barge-in listener after speech is done
+    if (stopBargeIn) stopBargeIn();
+
     const ttsDuration = Date.now() - ttsStart;
     console.log(`[Ghost][PERF] ✅ TTS flush completed in ${ttsDuration}ms`);
 
     // Stage 7: Action Execution
+    const hasActions = response.actions && response.actions.length > 0;
+    if (hasActions) {
+      const pendingActionResults = buildPendingActionResults(response.actions);
+      showOverlayFromResponse(response, pendingActionResults);
+      showOverlayToast('Ghost', 'Acting...', 8000, 'status', false);
+    } else {
+      showOverlayFromResponse(response, []);
+    }
+
     const actionStart = Date.now();
     console.log('[Ghost][PERF] ⚙️  Action execution started');
     const actionResults = await actionExecutor.executeBatch(response.actions, {
@@ -310,27 +356,8 @@ async function handleHotkey(): Promise<void> {
 
     await api.sendActionResults(response.command_id, actionResults);
 
-    // Show overlay with sources instead of native notification
-    if (response.memories_used && response.memories_used.length > 0) {
-      const deduped = dedupeSources(
-        response.memories_used.map((m: any) => ({
-          id: m.id,
-          type: m.type,
-          score: m.score,
-          summary: m.summary,
-          metadata: m.metadata
-        }))
-      );
-
-      windowManager.showOverlay(deduped, response.command_id, config.backend.apiKey);
-      console.info('[Ghost] Showed overlay with', deduped.length, 'sources');
-    } else {
-      // If no sources, just show a simple notification if needed, or nothing.
-      // For now, let's show the overlay anyway if there's a command ID, so the graph can show "Command" node.
-      if (response.command_id) {
-        windowManager.showOverlay([], response.command_id, config.backend.apiKey);
-      }
-      console.info('[Ghost] No memories to show');
+    if (hasActions) {
+      showOverlayFromResponse(response, actionResults);
     }
 
     // Overall Pipeline Summary
@@ -356,7 +383,108 @@ function notifyError(title: string, message: string): void {
   showOverlayToast(title, message);
 }
 
-app.whenReady().then(() => {
+async function handleOverlayChoice(text: string): Promise<void> {
+  if (isCommandActive) {
+    showOverlayToast('Ghost', 'Still working on another request.');
+    return;
+  }
+
+  isCommandActive = true;
+  const tokenBuffer: string[] = [];
+
+  try {
+    showOverlayToast('Ghost', 'Thinking...', 4000, 'overlay-processing', false);
+    const commandResult = await api.sendCommand(text, undefined, undefined, conversationalMode);
+    if (!commandResult.ok) {
+      notifyError('Command processing failed', 'Backend request failed');
+      return;
+    }
+
+    const response = commandResult.value;
+    await flushChunks(tokenBuffer, textToSpeech, response.assistant_text, false);
+
+    if (response.actions && response.actions.length > 0) {
+      const pendingActionResults = buildPendingActionResults(response.actions);
+      showOverlayFromResponse(response, pendingActionResults);
+      showOverlayToast('Ghost', 'Acting...', 6000, 'status', false);
+    } else {
+      showOverlayFromResponse(response, []);
+    }
+
+    const actionResults = await actionExecutor.executeBatch(response.actions, {
+      commandId: response.command_id,
+      memories: response.memories_used,
+    });
+    await api.sendActionResults(response.command_id, actionResults);
+    if (response.actions && response.actions.length > 0) {
+      showOverlayFromResponse(response, actionResults);
+    }
+  } catch (error) {
+    notifyError('Command processing failed', error instanceof Error ? error.message : 'Unknown error');
+  } finally {
+    isCommandActive = false;
+  }
+}
+
+function showOverlayFromResponse(response: any, actionResults?: any[]): void {
+  if (response.memories_used && response.memories_used.length > 0) {
+    const deduped = dedupeSources(
+      response.memories_used.map((m: any) => ({
+        id: m.id,
+        type: m.type,
+        score: m.score,
+        summary: m.summary,
+        metadata: m.metadata
+      }))
+    );
+
+    lastOverlayPayload = {
+      sources: deduped,
+      commandId: response.command_id,
+      apiKey: config.backend.apiKey,
+      text: response.assistant_text,
+      actions: actionResults,
+    };
+
+    windowManager.showOverlay(
+      deduped,
+      response.command_id,
+      config.backend.apiKey,
+      response.assistant_text,
+      actionResults
+    );
+    console.info('[Ghost] Showed overlay with', deduped.length, 'sources');
+  } else {
+    if (response.command_id) {
+      lastOverlayPayload = {
+        sources: [],
+        commandId: response.command_id,
+        apiKey: config.backend.apiKey,
+        text: response.assistant_text,
+        actions: actionResults,
+      };
+
+      windowManager.showOverlay(
+        [],
+        response.command_id,
+        config.backend.apiKey,
+        response.assistant_text,
+        actionResults
+      );
+    }
+    console.info('[Ghost] No memories to show');
+  }
+}
+
+function buildPendingActionResults(actions: any[]): ActionResult[] {
+  return (actions || []).map((action) => ({
+    action,
+    status: 'pending',
+    executedAt: new Date().toISOString(),
+  }));
+}
+
+app.whenReady().then(async () => {
   if (config.autoLaunch) {
     app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
   }
@@ -371,6 +499,14 @@ app.whenReady().then(() => {
     config.voice.maxRecordingDuration,
     windowManager.getMainWindow() || undefined
   );
+
+  // Pre-load the semantic classifier so the first command is fast
+  try {
+    await IntentClassifier.init();
+  } catch (error) {
+    console.error('[Ghost] Failed to initialize intent classifier:', error);
+    notifyError('AI Model Error', 'Failed to load intent classifier. Check internet connection.');
+  }
 
   createTray();
   hotkey.register();
@@ -404,6 +540,64 @@ app.whenReady().then(() => {
     console.log('[Ghost] Opening dashboard:', dashboardUrl);
     shell.openExternal(dashboardUrl);
   });
+
+  ipcMain.on('ghost/toast/click', () => {
+    if (!lastOverlayPayload) {
+      showOverlayToast('Ghost', 'No recent command to show.');
+      return;
+    }
+    windowManager.showOverlay(
+      lastOverlayPayload.sources,
+      lastOverlayPayload.commandId,
+      lastOverlayPayload.apiKey,
+      lastOverlayPayload.text,
+      lastOverlayPayload.actions
+    );
+  });
+
+  ipcMain.on('ghost/overlay/choice', async (_event: IpcMainEvent, payload: { text?: string }) => {
+    const choice = payload?.text?.trim();
+    if (!choice) return;
+    await handleOverlayChoice(choice);
+  });
+
+  ipcMain.on(
+    'ghost/overlay/retry-action',
+    async (event: IpcMainEvent, payload: { commandId?: string; index?: number; action?: any }) => {
+      if (!payload?.action || typeof payload.index !== 'number') return;
+      if (isCommandActive) {
+        showOverlayToast('Ghost', 'Still working on another request.');
+        return;
+      }
+
+      isCommandActive = true;
+      try {
+        const result = await actionExecutor.execute(payload.action, {
+          commandId: payload.commandId,
+          memories: [],
+        });
+        if (result.status === 'success') {
+          showOverlayToast('Ghost', 'Action retried successfully.');
+        } else {
+          showOverlayToast('Ghost', result.error || 'Action retry failed.');
+        }
+        event.sender.send('ghost/overlay/retry-result', {
+          index: payload.index,
+          status: result.status,
+          error: result.error,
+        });
+      } catch (error) {
+        event.sender.send('ghost/overlay/retry-result', {
+          index: payload.index,
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        showOverlayToast('Ghost', 'Action retry failed.');
+      } finally {
+        isCommandActive = false;
+      }
+    }
+  );
 
   // External activation handler (for dashboard button)
   ipcMain.handle('ghost/activate', async () => {
@@ -448,8 +642,12 @@ app.whenReady().then(() => {
     });
   });
 
-  // wakeWordService.start();
-  console.log('[Ghost] Wake word service disabled for stability. Use hotkey to activate.');
+  if (voiceConfig.wakeWordEnabled) {
+    wakeWordService.start();
+    console.log('[Ghost] Wake word service enabled. Say \"Hey Ghost\" or use the hotkey.');
+  } else {
+    console.log('[Ghost] Wake word service disabled for stability. Use hotkey to activate.');
+  }
 
   // Start HTTP server for external activation (dashboard button)
   const activationServer = new ActivationServer(3847, handleHotkey);
@@ -504,5 +702,3 @@ function dedupeSources(sources: Array<{ id: string; type: string; summary: strin
     .flat()
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 }
-
-
