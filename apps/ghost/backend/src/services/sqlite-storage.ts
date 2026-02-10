@@ -5,6 +5,7 @@ import { initializeDatabase, seedDemoData } from '../db/migrations.js';
 import { computeFileFingerprint } from '../utils/file-fingerprint.js';
 import type {
     ActionResult,
+    Action,
     CommandEntry,
     CommandRequest,
     CommandResponse,
@@ -65,7 +66,181 @@ export class SQLiteStorage {
         return { ok: true, value: { status: 'ok', mode: 'sqlite', db: this.db } };
     }
 
+    /**
+     * Close the storage connection and cleanup resources
+     */
+    async close(): Promise<void> {
+        if (this.db) {
+            this.db.close();
+        }
+        // Terminate the embedding worker
+        const { workerEmbeddingProvider } = await import('../adapters/worker-embedding-provider.js');
+        await workerEmbeddingProvider.terminate();
+    }
 
+    /**
+     * Prune memories based on type and age
+     */
+    async pruneMemories(rules: { type: string; maxAgeDays: number }[]): Promise<number> {
+        let totalDeleted = 0;
+
+        const deleteStmt = this.db.prepare(`
+            DELETE FROM memories 
+            WHERE type = ? 
+            AND created_at < datetime('now', '-' || ? || ' days')
+        `);
+
+        const deleteTransaction = this.db.transaction((rulesToProcess) => {
+            for (const rule of rulesToProcess) {
+                const result = deleteStmt.run(rule.type, rule.maxAgeDays);
+                totalDeleted += result.changes;
+            }
+        });
+
+        try {
+            deleteTransaction(rules);
+            return totalDeleted;
+        } catch (error) {
+            console.error('Failed to prune memories:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Save a conversation turn for short-term memory
+     */
+    async saveConversationTurn(
+        userId: string,
+        userText: string,
+        assistantText: string
+    ): Promise<void> {
+        const id = crypto.randomUUID();
+        const content = `User: ${userText}\nGhost: ${assistantText}`;
+
+        // Ensure user/workspace exists
+        await this.ensureUserAndWorkspace(userId);
+
+        const stmt = this.db.prepare(`
+            INSERT INTO memories (id, type, content, created_at, workspace_id, metadata)
+            VALUES (?, 'fact.conversation', ?, ?, ?, ?)
+        `);
+
+        stmt.run(
+            id,
+            content,
+            new Date().toISOString(),
+            userId, // workspace_id
+            JSON.stringify({ userText, assistantText })
+        );
+    }
+
+    /**
+     * Save a pending action that requires explicit user confirmation.
+     */
+    async savePendingAction(
+        userId: string,
+        actions: Action[],
+        memoriesUsed: MemoryReference[],
+        commandId: string,
+        extraMetadata: Record<string, any> = {}
+    ): Promise<void> {
+        const id = `pending-${crypto.randomUUID()}`;
+        const createdAt = new Date().toISOString();
+
+        await this.ensureUserAndWorkspace(userId);
+
+        const stmt = this.db.prepare(`
+            INSERT INTO memories (id, type, content, created_at, workspace_id, metadata)
+            VALUES (?, 'fact.pending_action', ?, ?, ?, ?)
+        `);
+
+        const metadata = {
+            actions,
+            memories_used: memoriesUsed,
+            command_id: commandId,
+            ...extraMetadata,
+        };
+
+        stmt.run(
+            id,
+            `Pending actions for command ${commandId}`,
+            createdAt,
+            userId,
+            JSON.stringify(metadata)
+        );
+    }
+
+    /**
+     * Retrieve the most recent pending action for a user within a time window.
+     */
+    getRecentPendingAction(
+        userId: string,
+        maxAgeMs: number = 2 * 60 * 1000
+    ): {
+        id: string;
+        metadata?: {
+            actions?: Action[];
+            memories_used?: MemoryReference[];
+            choices?: Array<{ action: Action; memories_used?: MemoryReference[]; label?: string }>;
+            default_index?: number;
+        };
+    } | null {
+        const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+        const row = this.db.prepare(`
+            SELECT id, metadata
+            FROM memories
+            WHERE workspace_id = ?
+              AND type = 'fact.pending_action'
+              AND created_at > ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        `).get(userId, cutoff) as { id: string; metadata: string | null } | undefined;
+
+        if (!row) return null;
+        let metadata: { actions?: Action[]; memories_used?: MemoryReference[] } | undefined;
+        if (row.metadata) {
+            try {
+                metadata = JSON.parse(row.metadata);
+            } catch {
+                metadata = undefined;
+            }
+        }
+        return { id: row.id, metadata };
+    }
+
+    /**
+     * Clear a pending action by id.
+     */
+    async clearPendingAction(id: string): Promise<void> {
+        this.db.prepare(`DELETE FROM memories WHERE id = ?`).run(id);
+    }
+
+    /**
+     * Get recent conversation turns for sliding window context
+     */
+    getRecentConversationTurns(userId: string, limit: number = 5, minutes: number = 10): MemoryReference[] {
+        const cutoff = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+
+        const stmt = this.db.prepare(`
+            SELECT id, type, content, metadata, created_at
+            FROM memories
+            WHERE workspace_id = ? 
+            AND type = 'fact.conversation'
+            AND created_at > ?
+            ORDER BY created_at ASC
+            LIMIT ?
+        `);
+
+        const rows = stmt.all(userId, cutoff, limit) as any[];
+
+        return rows.map(row => ({
+            id: row.id,
+            type: row.type,
+            score: 1.0,
+            summary: row.content,
+            metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata
+        }));
+    }
 
     /**
      * Persist a command + response pair and attach context memories
@@ -166,12 +341,22 @@ export class SQLiteStorage {
      */
     async addMemories(memories: StoredMemory[]): Promise<void> {
         // Dynamically import to avoid circular dependencies
-        const { localEmbeddingProvider } = await import('../adapters/local-embedding-provider.js');
+        const { workerEmbeddingProvider } = await import('../adapters/worker-embedding-provider.js');
 
         // Determine workspace to write into (default to single-user ghost, otherwise first memory's workspace)
         const workspaceId = memories[0]?.workspace_id || process.env.GHOST_WORKSPACE_ID || 'ghost';
         await this.ensureUserAndWorkspace(workspaceId);
         const collectionMemoryId = this.ensureCollectionMemory(workspaceId);
+
+        // 1. Generate all embeddings first (parallelized)
+        // Note: workerEmbeddingProvider is off-thread, so Promise.all schedules them on the worker
+        // If using an API, this would need rate limiting (e.g. p-limit)
+        const memoriesWithEmbeddings = await Promise.all(
+            memories.map(async (mem) => {
+                const embedding = await workerEmbeddingProvider.embed(mem.summary);
+                return { ...mem, embedding };
+            })
+        );
 
         const insertMem = this.db.prepare(`
       INSERT OR IGNORE INTO memories (id, workspace_id, conversation_id, type, content, confidence, metadata, embedding, created_at, updated_at)
@@ -183,35 +368,35 @@ export class SQLiteStorage {
       WHERE id = ?
     `);
 
-        for (const mem of memories) {
-            // Generate embedding for the memory content
-            const embedding = await localEmbeddingProvider.embed(mem.summary);
+        // 2. Execute writes in a single transaction
+        const transaction = this.db.transaction((items: typeof memoriesWithEmbeddings) => {
+            for (const mem of items) {
+                const metadataJson = JSON.stringify(mem.metadata || {});
+                const embeddingJson = JSON.stringify(mem.embedding);
 
-            const metadataJson = JSON.stringify(mem.metadata || {});
-            const embeddingJson = JSON.stringify(embedding);
+                // Upsert memory with embedding
+                insertMem.run(
+                    mem.id,
+                    workspaceId,
+                    mem.type,
+                    mem.summary,
+                    mem.score,
+                    metadataJson,
+                    embeddingJson
+                );
+                updateMem.run(mem.summary, mem.score, metadataJson, embeddingJson, mem.id);
 
-            // Upsert memory with embedding
-            insertMem.run(
-                mem.id,
-                workspaceId,
-                mem.type,
-                mem.summary,
-                mem.score,
-                metadataJson,
-                embeddingJson
-            );
-            updateMem.run(mem.summary, mem.score, metadataJson, embeddingJson, mem.id);
-
-            // Create a simple relationship from the collection root to each memory
-            try {
-                const relConfidence = Math.max(0, Math.min(1, mem.score ?? 0.8));
-                this.insertRelationship(collectionMemoryId, mem.id, 'contains', relConfidence);
-            } catch (error) {
-                console.warn('Failed to create relationship (skipping)', { from: collectionMemoryId, to: mem.id, error });
+                // Create a simple relationship from the collection root to each memory
+                try {
+                    const relConfidence = Math.max(0, Math.min(1, mem.score ?? 0.8));
+                    this.insertRelationship(collectionMemoryId, mem.id, 'contains', relConfidence);
+                } catch (error) {
+                    console.warn('Failed to create relationship (skipping)', { from: collectionMemoryId, to: mem.id, error });
+                }
             }
-        }
+        });
 
-        // Relationships are already added above; avoid duplicate inserts.
+        transaction(memoriesWithEmbeddings);
     }
 
     /**
@@ -357,8 +542,8 @@ export class SQLiteStorage {
         limit: number = 8
     ): Promise<Result<Array<{ memory: StoredMemory; score: number }>, { type: 'storage_error'; message: string }>> {
         // Dynamically import to avoid circular dependencies
-        const { localEmbeddingProvider } = await import('../adapters/local-embedding-provider.js');
-        const embedding = await localEmbeddingProvider.embed(queryText);
+        const { workerEmbeddingProvider } = await import('../adapters/worker-embedding-provider.js');
+        const embedding = await workerEmbeddingProvider.embed(queryText);
 
         const result = await this.storageClient.searchMemories(userId, {
             text: queryText,
@@ -526,7 +711,7 @@ export class SQLiteStorage {
                 .prepare(
                     `SELECT id, type, confidence as score, content as summary, metadata
                      FROM memories
-                     WHERE workspace_id = ? AND type NOT LIKE 'entity.file%' AND ${likeClauses}
+                     WHERE workspace_id = ? AND type NOT LIKE 'entity.file%' AND type != 'fact.pending_action' AND ${likeClauses}
                      ORDER BY confidence DESC, created_at DESC
                      LIMIT ?`
                 )
@@ -570,6 +755,7 @@ export class SQLiteStorage {
                      WHERE workspace_id = ?
                        AND type NOT LIKE 'entity.file%'
                        AND type NOT LIKE 'context.screen%'
+                       AND type != 'fact.pending_action'
                      ORDER BY created_at DESC
                      LIMIT ?`
                 )
@@ -616,63 +802,80 @@ export class SQLiteStorage {
                 timestamp: string;
             }>;
 
-        const commands: CommandEntry[] = commandRows.map((row) => {
-            // Fetch actions for this command
-            const actionRows = this.db
-                .prepare(
-                    `SELECT type, params, status, executed_at
-           FROM actions
-           WHERE command_id = ?`
-                )
-                .all(row.id) as Array<{
-                    type: string;
-                    params: string;
-                    status: string;
-                    executed_at: string;
-                }>;
+        if (commandRows.length === 0) {
+            return { commands: [], stats: this.getStats() };
+        }
 
-            const actions: ActionResult[] = actionRows.map((a) => ({
+        const commandIds = commandRows.map(c => c.id);
+        const placeholders = commandIds.map(() => '?').join(',');
+
+        // Fetch actions for all these commands
+        const allActions = this.db.prepare(`
+            SELECT command_id, type, params, status, executed_at
+            FROM actions
+            WHERE command_id IN (${placeholders})
+        `).all(...commandIds) as Array<{
+            command_id: string;
+            type: string;
+            params: string;
+            status: string;
+            executed_at: string;
+        }>;
+
+        // Group actions by command_id
+        const actionsByCommand = new Map<string, ActionResult[]>();
+        for (const a of allActions) {
+            if (!actionsByCommand.has(a.command_id)) {
+                actionsByCommand.set(a.command_id, []);
+            }
+            actionsByCommand.get(a.command_id)!.push({
                 action: {
                     type: a.type as any,
                     params: JSON.parse(a.params),
                 },
                 status: a.status as any,
                 executedAt: a.executed_at,
-            }));
+            });
+        }
 
-            // Fetch memories used for this command
-            const memoryRows = this.db
-                .prepare(
-                    `SELECT m.id, m.type, m.confidence as score, m.content as summary, m.metadata
-           FROM command_memories cm
-           JOIN memories m ON cm.memory_id = m.id
-           WHERE cm.command_id = ?`
-                )
-                .all(row.id) as Array<{
-                    id: string;
-                    type: string;
-                    score: number;
-                    summary: string;
-                    metadata: string | null;
-                }>;
+        // Fetch memories used for all these commands
+        const allMemories = this.db.prepare(`
+            SELECT cm.command_id, m.id, m.type, m.confidence as score, m.content as summary, m.metadata
+            FROM command_memories cm
+            JOIN memories m ON cm.memory_id = m.id
+            WHERE cm.command_id IN (${placeholders})
+        `).all(...commandIds) as Array<{
+            command_id: string;
+            id: string;
+            type: string;
+            score: number;
+            summary: string;
+            metadata: string | null;
+        }>;
 
-            const memories_used: MemoryReference[] = memoryRows.map((m) => ({
+        // Group memories by command_id
+        const memoriesByCommand = new Map<string, MemoryReference[]>();
+        for (const m of allMemories) {
+            if (!memoriesByCommand.has(m.command_id)) {
+                memoriesByCommand.set(m.command_id, []);
+            }
+            memoriesByCommand.get(m.command_id)!.push({
                 id: m.id,
-                type: m.type,
+                type: m.type as any,
                 score: m.score,
                 summary: m.summary,
                 metadata: m.metadata ? JSON.parse(m.metadata) : undefined,
-            }));
+            });
+        }
 
-            return {
-                id: row.id,
-                text: row.text,
-                assistant_text: row.assistant_text,
-                timestamp: row.timestamp,
-                actions,
-                memories_used,
-            };
-        });
+        const commands: CommandEntry[] = commandRows.map((row) => ({
+            id: row.id,
+            text: row.text,
+            assistant_text: row.assistant_text,
+            timestamp: row.timestamp,
+            actions: actionsByCommand.get(row.id) || [],
+            memories_used: memoriesByCommand.get(row.id) || [],
+        }));
 
         return {
             commands,

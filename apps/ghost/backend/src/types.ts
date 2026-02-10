@@ -14,6 +14,19 @@ export interface CommandRequest {
   scroll_direction?: 'up' | 'down'; // optional: direction hint from the client
   screenshot_path?: string;
   conversational_mode?: boolean; // When true, use chat personality with history
+  system_context?: {
+    active_window?: {
+      title: string;
+      app_name: string;
+    };
+    accessibility?: {
+        role?: string;
+        value?: string;
+        title?: string;
+        description?: string;
+    };
+    clipboard?: string;
+  };
   meta: {
     source: 'voice';
     client_version: string;
@@ -28,8 +41,41 @@ export interface CommandResponse {
 }
 
 export interface Action {
-  type: 'file.open' | 'file.scroll' | 'file.index' | 'info.recall' | 'info.summarize' | 'reminder.create';
-  params: FileOpenParams | FileScrollParams | FileIndexParams | InfoRecallParams | InfoSummarizeParams | ReminderCreateParams;
+  type:
+    | 'file.open'
+    | 'file.scroll'
+    | 'file.index'
+    | 'info.recall'
+    | 'info.summarize'
+    | 'reminder.create'
+    | 'search.query'
+    | 'system.open'
+    | 'system.type';
+  params:
+    | FileOpenParams
+    | FileScrollParams
+    | FileIndexParams
+    | InfoRecallParams
+    | InfoSummarizeParams
+    | ReminderCreateParams
+    | SearchQueryParams
+    | SystemOpenParams
+    | SystemTypeParams;
+  confidence?: number;
+  requires_confirmation?: boolean;
+}
+
+export interface SystemOpenParams {
+  target: string;
+  app?: string;
+}
+
+export interface SystemTypeParams {
+  text: string;
+}
+
+export interface SearchQueryParams {
+  query: string;
 }
 
 export interface FileIndexParams {
@@ -38,6 +84,7 @@ export interface FileIndexParams {
 
 export interface FileOpenParams {
   path: string;
+  search?: string; // optional in-file search term to focus after opening
   page?: number; // optional page number hint
   section?: string; // optional section/heading hint
   lineNumber?: number; // optional line number for code files
