@@ -30,7 +30,7 @@ export class GhostAPIClient {
     this.userId = config.user.id;
   }
 
-  async sendCommand(text: string, screenContext?: string, screenshotPath?: string, conversationalMode?: boolean): Promise<Result<CommandResponse, any>> {
+  async sendCommand(text: string, screenContext?: string, screenshotPath?: string, conversationalMode?: boolean, systemContext?: CommandRequest['system_context']): Promise<Result<CommandResponse, any>> {
     const payload: CommandRequest = {
       user_id: this.userId,
       command_id: crypto.randomUUID(),
@@ -39,6 +39,7 @@ export class GhostAPIClient {
       screen_context: screenContext,
       screenshot_path: screenshotPath,
       conversational_mode: conversationalMode,
+      system_context: systemContext,
       meta: {
         source: 'voice',
         client_version: '0.1.0',
@@ -62,7 +63,8 @@ export class GhostAPIClient {
     onToken?: (token: string) => void,
     screenContext?: string,
     screenshotPath?: string,
-    conversationalMode?: boolean
+    conversationalMode?: boolean,
+    systemContext?: CommandRequest['system_context']
   ): Promise<Result<CommandResponse, any>> {
     const payload: CommandRequest = {
       user_id: this.userId,
@@ -72,6 +74,7 @@ export class GhostAPIClient {
       screen_context: screenContext,
       screenshot_path: screenshotPath,
       conversational_mode: conversationalMode,
+      system_context: systemContext,
       meta: {
         source: 'voice',
         client_version: '0.1.0',

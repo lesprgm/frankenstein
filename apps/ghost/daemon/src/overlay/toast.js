@@ -27,6 +27,11 @@ function showToast({ title, body, duration, listening }) {
   }, duration || 4000);
 }
 
+toastEl.addEventListener('click', () => {
+  if (toastEl.classList.contains('hidden')) return;
+  ipcRenderer.send('ghost/toast/click');
+});
+
 ipcRenderer.on('ghost/toast', (_event, payload) => {
   if (payload.key && payload.key === currentKey) {
     // Same toast – refresh timer but don't animate flicker

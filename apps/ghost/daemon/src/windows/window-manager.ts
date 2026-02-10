@@ -59,10 +59,10 @@ export class WindowManager {
         const { width } = screen.getPrimaryDisplay().workAreaSize;
 
         this.overlayWindow = new BrowserWindow({
-            width: 240, // Reduced from 300 for more compact display
+            width: 360, // Increased to 360px
             height: 100, // Minimum height so overlay is visible even if resize fails
             useContentSize: true,
-            x: width - 340, // Initial position with padding
+            x: width - 380, // Initial position with padding
             y: 40,
             frame: false,
             transparent: true,
@@ -87,7 +87,7 @@ export class WindowManager {
     public resizeOverlay(contentHeight: number): void {
         if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
             const { workArea } = screen.getPrimaryDisplay();
-            const width = 240; // Reduced from 300 for more compact display
+            const width = 360; // Increased to 360px
             const padding = 20; // "move it a bit to the left"
 
             // Calculate position: Top-right with padding
@@ -115,7 +115,13 @@ export class WindowManager {
         return this.overlayWindow;
     }
 
-    public showOverlay(sources: any[], commandId?: string, apiKey?: string): void {
+    public showOverlay(
+        sources: any[],
+        commandId?: string,
+        apiKey?: string,
+        text?: string,
+        actions?: any[]
+    ): void {
         if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
             console.log('[WindowManager] Updating overlay with', sources.length, 'sources', commandId);
 
@@ -125,7 +131,7 @@ export class WindowManager {
             // Send the update after page fully loads (not a race-prone setTimeout)
             this.overlayWindow.webContents.once('did-finish-load', () => {
                 if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
-                    this.overlayWindow.webContents.send('update-sources', { sources, commandId, apiKey });
+                    this.overlayWindow.webContents.send('update-sources', { sources, commandId, apiKey, text, actions });
                 }
             });
 
@@ -135,21 +141,25 @@ export class WindowManager {
             this.overlayWindow.setVisibleOnAllWorkspaces(true);
 
             // Adaptive sizing based on content
-            if (commandId) {
-                const width = 320;
+            if (commandId || text) {
+                const width = 360;
 
                 // Calculate height based on number of sources
                 // Base: Header(40) + Graph(160) + Footer(30) = 230px
                 // Per source: ~50px
-                const baseHeight = 230;
+                let baseHeight = 230;
+                if (text) {
+                    baseHeight += 100; // Approximate height for text
+                }
+                
                 const sourceHeight = 50;
                 const maxSourcesVisible = 5;
 
                 const visibleSources = Math.min(sources.length, maxSourcesVisible);
                 const calculatedHeight = baseHeight + (visibleSources * sourceHeight);
 
-                // Clamp between 240px (minimal) and 380px (max comfortable)
-                const height = Math.max(240, Math.min(380, calculatedHeight));
+                // Clamp between 240px (minimal) and 500px (max comfortable)
+                const height = Math.max(240, Math.min(500, calculatedHeight));
 
                 this.overlayWindow.setSize(width, height);
 

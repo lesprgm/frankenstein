@@ -23,10 +23,17 @@ export class WhisperSTT {
     }
 
     const provider = this.opts?.provider || 'generic';
+    const demoMode = process.env.GHOST_STT_DEMO === 'true';
 
     if (!this.apiKey && provider !== 'local-whisper') {
-      const fallback = 'What is the status of the ACME Q4 launch?';
-      return { ok: true, value: this.stripWakeWord(fallback) };
+      if (demoMode) {
+        const fallback = 'What is the status of the ACME Q4 launch?';
+        return { ok: true, value: this.stripWakeWord(fallback) };
+      }
+      return {
+        ok: false,
+        error: { type: 'stt_failed', message: 'Speech-to-text is not configured.' },
+      };
     }
 
     // If a remote STT endpoint is configured, attempt to POST audio there.

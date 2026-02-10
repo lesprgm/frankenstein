@@ -3,13 +3,23 @@ const { ipcRenderer } = require('electron');
 const popup = document.getElementById('popup');
 const sourcesList = document.getElementById('sources-list');
 const sourceCount = document.getElementById('source-count');
+const stateBadge = document.getElementById('state-badge');
 const closeBtn = document.getElementById('close-btn');
+const responseContainer = document.getElementById('response-container');
+const responseText = document.getElementById('response-text');
+const choicesContainer = document.getElementById('choices-container');
+const choicesList = document.getElementById('choices-list');
+const actionsContainer = document.getElementById('actions-container');
+const actionsList = document.getElementById('actions-list');
 const dismissBtn = document.getElementById('dismiss-btn');
 const toast = document.getElementById('toast');
 const toastTitle = document.getElementById('toast-title');
 const toastBody = document.getElementById('toast-body');
 let toastTimeout = null;
 let resizeTimeout = null;
+let currentCommandId = null;
+let currentActions = [];
+let currentChoices = [];
 
 function requestOverlayResize(delay = 50) {
     clearTimeout(resizeTimeout);
@@ -32,6 +42,7 @@ function getFileType(source) {
 function renderSources(sources) {
     sourcesList.innerHTML = '';
     sourceCount.textContent = `${sources.length} source${sources.length !== 1 ? 's' : ''}`;
+    sourceCount.style.display = sources.length > 0 ? 'inline-flex' : 'none';
 
     sources.forEach(source => {
         const card = document.createElement('div');
@@ -78,12 +89,200 @@ function renderSources(sources) {
     requestOverlayResize();
 }
 
+function setStateBadge(state) {
+    if (!stateBadge) return;
+    if (!state) {
+        stateBadge.style.display = 'none';
+        stateBadge.textContent = '';
+        stateBadge.className = 'state-badge';
+        return;
+    }
+
+    const normalized = String(state).toLowerCase();
+    const label = normalized === 'failed'
+        ? 'Failed'
+        : normalized === 'pending'
+            ? 'Pending'
+            : 'Done';
+
+    stateBadge.textContent = label;
+    stateBadge.className = `state-badge ${normalized === 'failed' ? 'failed' : normalized === 'pending' ? 'pending' : 'done'}`;
+    stateBadge.style.display = 'inline-flex';
+}
+
+function deriveState(actions) {
+    if (!Array.isArray(actions) || actions.length === 0) return 'done';
+    if (actions.some((a) => a.status === 'failed')) return 'failed';
+    if (actions.some((a) => a.status === 'pending')) return 'pending';
+    return 'done';
+}
+
+function formatActionDetail(action) {
+    if (!action || !action.params) return '';
+    const params = action.params || {};
+    if (action.type === 'file.open') {
+        const rawPath = params.path || '';
+        return rawPath.split(/[\\/]/).pop() || 'file';
+    }
+    if (action.type === 'file.scroll') {
+        return params.direction ? `scroll ${params.direction}` : 'scroll';
+    }
+    if (action.type === 'system.open') {
+        return params.target || 'open';
+    }
+    if (action.type === 'system.type') {
+        return 'type text';
+    }
+    if (action.type === 'reminder.create') {
+        return params.title || 'reminder';
+    }
+    if (action.type === 'search.query') {
+        return params.query || 'search';
+    }
+    if (action.type === 'info.summarize') {
+        return params.topic || 'summary';
+    }
+    return '';
+}
+
+function renderActions(actions) {
+    currentActions = Array.isArray(actions) ? actions : [];
+    if (!actionsContainer || !actionsList) return;
+
+    actionsList.innerHTML = '';
+
+    if (currentActions.length === 0) {
+        actionsContainer.style.display = 'none';
+        return;
+    }
+
+    actionsContainer.style.display = 'flex';
+
+    currentActions.forEach((entry, index) => {
+        const action = entry?.action || {};
+        const status = (entry?.status || 'pending').toLowerCase();
+        const label = action.type || 'action';
+        const detail = formatActionDetail(action);
+
+        const item = document.createElement('div');
+        item.className = 'action-item';
+
+        const main = document.createElement('div');
+        main.className = 'action-main';
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'action-label';
+        labelEl.textContent = label;
+
+        const detailEl = document.createElement('div');
+        detailEl.className = 'action-detail';
+        detailEl.textContent = detail;
+
+        main.appendChild(labelEl);
+        if (detail) main.appendChild(detailEl);
+
+        const statusEl = document.createElement('div');
+        statusEl.className = `action-status ${status}`;
+        statusEl.textContent = status === 'failed' ? 'Failed' : status === 'success' ? 'Success' : 'Pending';
+
+        item.appendChild(main);
+        item.appendChild(statusEl);
+
+        if (status === 'failed') {
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'action-retry';
+            retryBtn.textContent = 'Retry';
+            retryBtn.addEventListener('click', () => {
+                retryBtn.disabled = true;
+                ipcRenderer.send('ghost/overlay/retry-action', {
+                    commandId: currentCommandId,
+                    index,
+                    action
+                });
+            });
+            item.appendChild(retryBtn);
+        }
+
+        actionsList.appendChild(item);
+    });
+
+    requestOverlayResize();
+}
+
+function parseChoicesFromText(text) {
+    if (!text) return [];
+    const lines = text.split('\n');
+    const choices = [];
+    for (const line of lines) {
+        const match = line.trim().match(/^(\d+)\)\s+(.+)/);
+        if (match) {
+            choices.push({ index: Number(match[1]), label: match[2].trim() });
+        }
+    }
+    return choices;
+}
+
+function renderChoices(choices) {
+    currentChoices = Array.isArray(choices) ? choices : [];
+    if (!choicesContainer || !choicesList) return;
+
+    choicesList.innerHTML = '';
+
+    if (currentChoices.length === 0) {
+        choicesContainer.style.display = 'none';
+        return;
+    }
+
+    choicesContainer.style.display = 'flex';
+
+    currentChoices.forEach((choice) => {
+        const btn = document.createElement('button');
+        btn.className = 'choice-btn';
+        btn.textContent = `${choice.index}) ${choice.label}`;
+        btn.addEventListener('click', () => {
+            const buttons = choicesList.querySelectorAll('button');
+            buttons.forEach((b) => {
+                b.disabled = true;
+            });
+            ipcRenderer.send('ghost/overlay/choice', { text: String(choice.index) });
+        });
+        choicesList.appendChild(btn);
+    });
+
+    requestOverlayResize();
+}
+
 // Global API key storage
 let currentApiKey = null;
+let actionPayloadProvided = false;
 
-ipcRenderer.on('update-sources', (event, { sources, commandId, apiKey }) => {
+ipcRenderer.on('update-sources', (event, payload) => {
+    const { sources, commandId, apiKey, text, actions } = payload || {};
     currentCommandId = commandId;
     currentApiKey = apiKey;
+    actionPayloadProvided = Array.isArray(actions);
+    
+    // Update response text if available
+    if (text) {
+        responseText.textContent = text;
+        responseContainer.style.display = 'block';
+        renderChoices(parseChoicesFromText(text));
+    } else {
+        responseContainer.style.display = 'none';
+        responseText.textContent = '';
+        renderChoices([]);
+    }
+
+    if (actionPayloadProvided) {
+        renderActions(actions || []);
+        setStateBadge(deriveState(actions || []));
+    } else if (commandId) {
+        setStateBadge('done');
+    } else {
+        setStateBadge(null);
+        renderActions([]);
+    }
+
     renderSources(sources);
     popup.style.display = 'flex';
 
@@ -117,7 +316,21 @@ function renderGraph(commandId) {
             return res.json();
         })
         .then(command => {
-            if (!command || !command.memories_used) {
+            if (!command) {
+                console.warn('No command found for:', commandId);
+                graphContainer.style.display = 'none';
+                requestOverlayResize();
+                renderActions([]);
+                return;
+            }
+
+            const actions = Array.isArray(command.actions) ? command.actions : [];
+            if (!actionPayloadProvided) {
+                renderActions(actions);
+                setStateBadge(deriveState(actions));
+            }
+
+            if (!command.memories_used) {
                 console.warn('No memories found for command:', commandId);
                 graphContainer.style.display = 'none';
                 requestOverlayResize();
@@ -318,6 +531,19 @@ ipcRenderer.on('ghost/overlay/toast', (_event, { title, body, duration }) => {
     toastTimeout = setTimeout(() => {
         toast.classList.remove('visible');
     }, duration || 4000);
+});
+
+ipcRenderer.on('ghost/overlay/retry-result', (_event, payload) => {
+    if (!payload || typeof payload.index !== 'number') return;
+    if (!currentActions[payload.index]) return;
+
+    currentActions[payload.index] = {
+        ...currentActions[payload.index],
+        status: payload.status || currentActions[payload.index].status,
+        error: payload.error || currentActions[payload.index].error,
+    };
+    renderActions(currentActions);
+    setStateBadge(deriveState(currentActions));
 });
 
 closeBtn.addEventListener('click', () => {

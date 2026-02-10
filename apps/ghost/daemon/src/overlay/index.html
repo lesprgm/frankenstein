@@ -13,11 +13,28 @@
     <div id="popup" class="source-popup" style="display: none;">
         <div class="popup-header">
             <div class="popup-header-content">
-                <span class="popup-title">Found in</span>
-                <span class="source-count" id="source-count">0 sources</span>
+                <span class="popup-title">Ghost</span>
+                <span class="state-badge" id="state-badge" style="display: none;">Done</span>
+                <span class="source-count" id="source-count" style="display: none;">0 sources</span>
             </div>
             <button class="close-btn" id="close-btn">×</button>
         </div>
+        
+        <!-- New Response Section -->
+        <div id="response-container" class="response-container" style="display: none;">
+            <div id="response-text" class="response-text"></div>
+        </div>
+
+        <div id="choices-container" class="choices-container" style="display: none;">
+            <div class="choices-title">Choose an option</div>
+            <div id="choices-list" class="choices-list"></div>
+        </div>
+
+        <div id="actions-container" class="actions-container" style="display: none;">
+            <div class="actions-title">Actions</div>
+            <div id="actions-list" class="actions-list"></div>
+        </div>
+
         <div class="sources-list" id="sources-list">
         </div>
         <div id="graph-container" class="graph-container" style="display: none;">

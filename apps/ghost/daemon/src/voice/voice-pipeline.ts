@@ -188,6 +188,81 @@ export class VoicePipeline {
     showOverlayToast('Ghost', body);
   }
 
+  /**
+   * Listen for speech interruption (Barge-in).
+   * Returns a function to stop listening.
+   */
+  listenForInterruption(onSpeechDetected: () => void): () => void {
+    if (this.isRecording) {
+      console.warn('[VoicePipeline] Cannot listen for interruption, already recording');
+      return () => {};
+    }
+
+    this.isRecording = true;
+    const recordFn = (recordModule as any).record || (recordModule as any).default;
+    
+    if (!recordFn) {
+      this.isRecording = false;
+      return () => {};
+    }
+
+    let rec: any;
+    let isStopped = false;
+
+    try {
+      rec = recordFn({
+        sampleRate: 16_000,
+        threshold: 0,
+        verbose: false,
+        recordProgram: process.platform === 'win32' ? 'sox' : 'rec',
+        endOnSilence: false,
+      });
+    } catch (e) {
+      this.isRecording = false;
+      return () => {};
+    }
+
+    const stream = rec.stream();
+    
+    // Energy threshold for barge-in (adjustable)
+    const BARGE_IN_THRESHOLD = 0.02; 
+    let consecutiveSpeechFrames = 0;
+    const REQUIRED_FRAMES = 3; // ~100ms of speech
+
+    stream.on('data', (chunk: Buffer) => {
+      if (isStopped) return;
+
+      // Calculate RMS
+      let sum = 0;
+      const samples = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.byteLength / 2);
+      for (let i = 0; i < samples.length; i += 10) {
+        const val = samples[i] / 32768.0;
+        sum += val * val;
+      }
+      const rms = Math.sqrt(sum / (samples.length / 10));
+
+      if (rms > BARGE_IN_THRESHOLD) {
+        consecutiveSpeechFrames++;
+        if (consecutiveSpeechFrames >= REQUIRED_FRAMES) {
+          console.log('[VoicePipeline] Barge-in detected! RMS:', rms.toFixed(4));
+          onSpeechDetected();
+          stop(); // Stop listening once detected
+        }
+      } else {
+        consecutiveSpeechFrames = 0;
+      }
+    });
+
+    const stop = () => {
+      if (isStopped) return;
+      isStopped = true;
+      this.isRecording = false;
+      if (rec) rec.stop();
+    };
+
+    return stop;
+  }
+
   // Keep background recording simple (time-based)
   async recordBackground(durationMs: number = 3000): Promise<Buffer> {
     if (this.isRecording) return Buffer.alloc(0);

@@ -31,6 +31,14 @@ export class ExplainabilityNotifier {
     async showContextNotification(params: NotificationParams): Promise<void> {
         const { commandId, summary, memoryCount, primarySource, memories } = params;
 
+        // Generate summary to check confidence
+        const summaryText = ExplainabilityNotifier.generateSummary(memories || []);
+
+        // Quiet Mode: If confidence is low (General Knowledge), suppress the overlay
+        if (summaryText === 'General Knowledge') {
+            return;
+        }
+
         // Try to show overlay first if available and we have memories
         if (this.windowManager && memories && memories.length > 0) {
             try {
@@ -49,34 +57,6 @@ export class ExplainabilityNotifier {
                 console.error('[Ghost][ExplainabilityNotifier] Failed to show overlay:', err);
             }
         }
-
-        // Fallback to native notification - DISABLED for custom overlay demo
-        /*
-        const body = this.buildNotificationBody(summary, memoryCount, primarySource);
-
-        const notification = new Notification({
-            title: '🧠 Ghost Memory Recall',
-            body,
-            silent: false,
-            urgency: 'low',
-            timeoutType: 'default',
-        });
-
-        // Handle click - open dashboard with deep link
-        notification.on('click', () => {
-            const url = `${this.dashboardUrl}/explain/${commandId}`;
-            shell.openExternal(url).catch((err) => {
-                console.error('[Ghost][ExplainabilityNotifier] Failed to open URL:', err);
-            });
-        });
-
-        notification.show();
-
-        // Auto-dismiss after 5 seconds
-        setTimeout(() => {
-            notification.close();
-        }, 5000);
-        */
     }
 
     /**
@@ -102,19 +82,24 @@ export class ExplainabilityNotifier {
      * Generate summary from memories
      */
     static generateSummary(memories: MemoryReference[]): string {
-        if (memories.length === 0) return 'No memories found';
+        if (memories.length === 0) return 'No local context found';
 
-        // Use the top memory's source or content
         const topMemory = memories[0];
+
+        // Confidence check: If score is low, assume general knowledge
+        // 0.65 is a heuristic for "high confidence"
+        if ((topMemory.score ?? 0) < 0.65) {
+            return 'General Knowledge';
+        }
 
         // Try to extract a meaningful source
         if (topMemory.metadata?.source) {
-            return `Found in ${topMemory.metadata.source}`;
+            return `Context: ${topMemory.metadata.source}`;
         }
 
         // Fallback to memory type
         const typeLabel = this.formatMemoryType(topMemory.type);
-        return `Retrieved from ${typeLabel}`;
+        return `Context: ${typeLabel}`;
     }
 
     /**
