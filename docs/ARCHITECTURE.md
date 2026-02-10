@@ -34,10 +34,19 @@ MemoryLayer is built as **four independent packages** that work together. Each p
 ### 2. `@memorylayer/memory-extraction`
 **What**: LLM-powered extraction engine
 **Purpose**: Turn text into structured memories
-**Options**:
-- Providers: OpenAI, Anthropic, Google
-- Custom memory types
-- Chunking for large conversations
+**Key Components**:
+- **Strategy Pattern**: Swap between fast single-pass and reliable multi-agent extraction
+- **Providers**: OpenAI, Anthropic, Google Gemini
+- **Chunking**: Smart semantic chunking for large documents
+
+#### Reliability Layer (MAKER)
+Built-in consensus system for high-stakes memory extraction:
+- **Micro-agents**: Parallel LLM calls (default: 3 replicas)
+- **Consensus**: K-threshold voting to eliminate hallucinations
+- **Red-Flagging**: Schema validation and strict filtering
+- **Strategies**:
+  - `StructuredOutputStrategy`: Fast, single-call (Default)
+  - `MakerStrategy`: Multi-agent consensus (High Reliability)
 
 ### 3. `@memorylayer/context-engine`
 **What**: Semantic search and context building
@@ -60,8 +69,10 @@ Text Input
    │
    ▼
 ┌──────────────────┐
-│  Extraction      │  → Extract entities, facts, decisions
-└────────┬─────────┘
+│  Extraction      │  → Strategy: Single vs Maker (Consensus)
+└────────┬─────────┘       ↓
+         │            [Micro-agents x3] → [Voting]
+         ▼
          │
          ▼
 ┌──────────────────┐
@@ -163,10 +174,26 @@ const extractor = new MemoryExtractor({
 memoryTypes: ['entity', 'fact', 'decision']
 
 // Custom types for your domain
+// Custom types for your domain
 memoryTypes: ['bug', 'feature', 'requirement', 'meeting-note']
 ```
 
 **Same extraction, different structure.**
+
+### Example 4: Enable Maker Reliability
+
+```typescript
+import { MakerStrategy } from '@memorylayer/memory-extraction';
+
+const extractor = new MemoryExtractor({
+  strategy: new MakerStrategy({
+    replicas: 3,
+    temperature: 0.7
+  })
+});
+```
+
+**Same pipeline, higher reliability.**
 
 ## Package Dependencies
 
