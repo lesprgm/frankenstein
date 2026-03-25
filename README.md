@@ -4,6 +4,8 @@
 
 MemoryLayer is a lean, modular memory stack that gives any AI application the ability to remember. Four focused packages provide everything you need: capture conversations, extract knowledge, store in SQL+vectors, and build intelligent context.
 
+# Youtube video
+
 [![Watch the MemoryLayer demo](https://img.youtube.com/vi/Vx8o01rarzM/hqdefault.jpg)](https://youtu.be/Vx8o01rarzM)
 
 ## Hello World (5 Lines)
